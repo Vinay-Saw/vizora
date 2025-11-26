@@ -44,7 +44,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Install Playwright browsers during build
-RUN playwright install --with-deps chromium
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
 # Expose port 7860 (required by Hugging Face Spaces)
 EXPOSE 7860
