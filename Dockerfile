@@ -40,14 +40,19 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers - this must run as root and before switching users
+# Install Playwright browsers and dependencies as root
 RUN playwright install --with-deps chromium
 
-# Copy application files
-COPY . .
+# Create a non-root user
+RUN useradd -m -u 1000 appuser
+USER appuser
+WORKDIR /home/appuser/app
 
-# Expose port 7860 (required by Hugging Face Spaces)
+# Copy application files as the new user
+COPY --chown=appuser:appuser . .
+
+# Expose port 7860
 EXPOSE 7860
 
-# Run the Gradio application
+# Run the Gradio application as the new user
 CMD ["python", "app.py"]
