@@ -1,9 +1,9 @@
 """
-Gradio UI wrapper for the Vizora Quiz Solver
-This provides a web interface for Hugging Face Spaces deployment
+Combined FastAPI + Gradio app for Vizora Quiz Solver
+Provides both API endpoint and web interface for Hugging Face Spaces
 """
 import gradio as gr
-from main import process_quiz
+from main import app as fastapi_app, process_quiz
 import os
 from dotenv import load_dotenv
 
@@ -88,5 +88,9 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Vizora Quiz Solver") as demo:
     - **Powered by:** FastAPI, Playwright, OpenRouter LLMs
     """)
 
+# Mount Gradio on FastAPI at /gradio path
+app = gr.mount_gradio_app(fastapi_app, demo, path="/gradio")
+
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)

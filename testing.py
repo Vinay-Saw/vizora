@@ -1,7 +1,8 @@
 import httpx
 
+# Call the FastAPI endpoint at root (/)
 response = httpx.post(
-    "https://vinaysaw-vizora.hf.space/call/solve_quiz",
+    "https://vinaysaw-vizora.hf.space/",
     json={
         "email": "email@example.com",
         "secret": "vinaykumar",
@@ -9,4 +10,8 @@ response = httpx.post(
     }
 )
 
-print(response.json())
+print(f"Status: {response.status_code}")
+print(f"Response: {response.json()}")
+
+# Note: The Gradio UI is now at https://vinaysaw-vizora.hf.space/gradio
+# The FastAPI endpoint is at https://vinaysaw-vizora.hf.space/
