@@ -1,0 +1,40 @@
+# Environment files
+.env
+.env.*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Generated files
+solver_*.py
+*.log
+
+# Testing
+test_*.py
+testing.py
+
+# Documentation
+README.md
+
+# OS
+.DS_Store
+Thumbs.db
