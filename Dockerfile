@@ -4,9 +4,6 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Set environment variable to ensure Playwright uses system installation
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
 # Install system dependencies required for Playwright
 RUN apt-get update && apt-get install -y \
     wget \
@@ -43,7 +40,7 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers and system dependencies
+# Install Playwright browsers - this must run as root and before switching users
 RUN playwright install --with-deps chromium
 
 # Copy application files
