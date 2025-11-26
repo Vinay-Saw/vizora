@@ -89,27 +89,17 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     - **API Endpoint:** POST to this URL with email, secret, and quiz URL
     """)
 
-# Add the FastAPI endpoint directly to Gradio
-from main import QuizRequest, SECRET_KEY as MAIN_SECRET_KEY
-from fastapi import HTTPException
-from fastapi.responses import JSONResponse
-import asyncio
+# Get the FastAPI app from Gradio and add our endpoint
+from main import QuizRequest, SECRET_KEY as MAIN_SECRET_KEY, receive_quiz
+from fastapi import FastAPI
 
-@demo.post("/")
-async def receive_quiz(request: QuizRequest):
-    """API endpoint to receive quiz requests"""
-    if request.secret != MAIN_SECRET_KEY:
-        raise HTTPException(status_code=403, detail="Forbidden: Invalid secret")
-    
-    asyncio.create_task(process_quiz(request.email, request.secret, request.url))
-    
-    return JSONResponse(
-        status_code=200,
-        content={
-            "status": "accepted",
-            "message": "Quiz processing started"
-        }
-    )
+# Add FastAPI endpoint to the Gradio app
+@demo.load
+def setup_api():
+    # Get the FastAPI app that Gradio creates
+    app: FastAPI = demo.app
+    # Add our custom POST endpoint
+    app.add_api_route("/", receive_quiz, methods=["POST"])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
