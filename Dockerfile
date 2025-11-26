@@ -40,22 +40,15 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser dependencies as root
-RUN playwright install-deps chromium
+# Copy application files
+COPY . .
 
-# Create a non-root user
-RUN useradd -m -u 1000 appuser
-USER appuser
-WORKDIR /home/appuser/app
-
-# Install Playwright browsers for the app user so binaries live under their home directory
-RUN playwright install chromium
-
-# Copy application files as the new user
-COPY --chown=appuser:appuser . .
+# Install Playwright and browsers AFTER copying files, as root
+# This ensures browsers are installed in /root/.cache where the app expects them
+RUN playwright install --with-deps chromium
 
 # Expose port 7860 (required by Hugging Face Spaces)
 EXPOSE 7860
 
-# Run the Gradio application as the new user
+# Run the application
 CMD ["python", "app.py"]
