@@ -88,8 +88,8 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     - **Powered by:** FastAPI, httpx, OpenRouter LLMs
     """)
 
-# Mount Gradio on FastAPI at /gradio path
-app = gr.mount_gradio_app(fastapi_app, demo, path="/gradio")
+# Mount FastAPI on Gradio - FastAPI at root, Gradio UI embedded
+app = gr.mount_gradio_app(fastapi_app, demo, path="/")
 
 if __name__ == "__main__":
     import uvicorn
