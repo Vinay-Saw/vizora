@@ -8,4 +8,5 @@ beautifulsoup4==4.12.3
 pandas==2.2.0
 lxml==5.1.0
 requests==2.31.0
-gradio>=4.0.0
+gradio==4.44.0
+huggingface-hub==0.25.2
