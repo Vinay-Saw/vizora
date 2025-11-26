@@ -43,12 +43,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Install Playwright and browsers AFTER copying files, as root
-# This ensures browsers are installed in /root/.cache where the app expects them
+# Install Playwright browsers during build
 RUN playwright install --with-deps chromium
 
 # Expose port 7860 (required by Hugging Face Spaces)
 EXPOSE 7860
 
-# Run the application
-CMD ["python", "app.py"]
+# Create startup script that ensures Playwright is ready before running the app
+RUN echo '#!/bin/bash\nplaywright install chromium\npython app.py' > /start.sh && chmod +x /start.sh
+
+# Run the startup script
+CMD ["/bin/bash", "/start.sh"]
