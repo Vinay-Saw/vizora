@@ -89,17 +89,12 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     - **API Endpoint:** POST to this URL with email, secret, and quiz URL
     """)
 
-# Get the FastAPI app from Gradio and add our endpoint
-from main import QuizRequest, SECRET_KEY as MAIN_SECRET_KEY, receive_quiz
-from fastapi import FastAPI
+# Import FastAPI endpoint components
+from main import app as fastapi_app
 
-# Add FastAPI endpoint to the Gradio app
-@demo.load
-def setup_api():
-    # Get the FastAPI app that Gradio creates
-    app: FastAPI = demo.app
-    # Add our custom POST endpoint
-    app.add_api_route("/", receive_quiz, methods=["POST"])
+# Mount the Gradio interface on FastAPI
+app = gr.mount_gradio_app(fastapi_app, demo, path="/ui")
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
