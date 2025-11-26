@@ -3,7 +3,7 @@ Gradio UI wrapper for the Vizora Quiz Solver
 This provides a web interface for Hugging Face Spaces deployment
 """
 import gradio as gr
-import httpx
+from vizora.solver import QuizSolver
 import os
 from dotenv import load_dotenv
 
@@ -14,7 +14,7 @@ STUDENT_EMAIL = os.getenv("STUDENT_EMAIL", "your_email@example.com")
 
 async def solve_quiz(quiz_url: str, email: str = None, secret: str = None):
     """
-    Solve a quiz by calling the FastAPI backend
+    Solve a quiz directly using the QuizSolver
     """
     if not email:
         email = STUDENT_EMAIL
@@ -22,22 +22,9 @@ async def solve_quiz(quiz_url: str, email: str = None, secret: str = None):
         secret = SECRET_KEY
         
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                "http://localhost:8000/solve-quiz",
-                json={
-                    "email": email,
-                    "secret": secret,
-                    "url": quiz_url
-                }
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return f"✅ Success!\n\nStatus: {result['status']}\nMessage: {result.get('message', 'Quiz solved successfully!')}"
-            else:
-                return f"❌ Error: {response.status_code}\n{response.text}"
-                
+        solver = QuizSolver(email=email, secret=secret)
+        result = await solver.solve_quiz(quiz_url)
+        return f"✅ Success!\n\nStatus: {result.get('status', 'completed')}\nMessage: {result.get('message', 'Quiz solved successfully!')}"
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
@@ -91,7 +78,8 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Vizora Quiz Solver") as demo:
     solve_btn.click(
         fn=solve_quiz,
         inputs=[quiz_url, email, secret],
-        outputs=output
+        outputs=output,
+        api_name="solve_quiz"  # Add API name here
     )
     
     gr.Markdown("""

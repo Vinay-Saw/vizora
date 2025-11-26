@@ -1,7 +1,7 @@
 import httpx
 
 response = httpx.post(
-    "http://localhost:8000/",
+    "https://vinaysaw-vizora.hf.space/solve_quiz",
     json={
         "email": "email@example.com",
         "secret": "vinaykumar",
