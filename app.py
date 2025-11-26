@@ -1,9 +1,9 @@
 """
-Combined FastAPI + Gradio app for Vizora Quiz Solver
-Provides both API endpoint and web interface for Hugging Face Spaces
+Gradio UI for Vizora Quiz Solver
+Provides web interface for Hugging Face Spaces
 """
 import gradio as gr
-from main import app as fastapi_app, process_quiz
+from main import process_quiz
 import os
 from dotenv import load_dotenv
 
@@ -85,12 +85,31 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     ---
     ### About
     - **GitHub:** [Vinay-Saw/vizora](https://github.com/Vinay-Saw/vizora)
-    - **Powered by:** FastAPI, httpx, OpenRouter LLMs
+    - **Powered by:** FastAPI, Playwright, OpenRouter LLMs
+    - **API Endpoint:** POST to this URL with email, secret, and quiz URL
     """)
 
-# Mount FastAPI on Gradio - FastAPI at root, Gradio UI embedded
-app = gr.mount_gradio_app(fastapi_app, demo, path="/")
+# Add the FastAPI endpoint directly to Gradio
+from main import QuizRequest, SECRET_KEY as MAIN_SECRET_KEY
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+import asyncio
+
+@demo.post("/")
+async def receive_quiz(request: QuizRequest):
+    """API endpoint to receive quiz requests"""
+    if request.secret != MAIN_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid secret")
+    
+    asyncio.create_task(process_quiz(request.email, request.secret, request.url))
+    
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "accepted",
+            "message": "Quiz processing started"
+        }
+    )
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860)
