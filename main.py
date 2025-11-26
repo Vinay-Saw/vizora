@@ -121,24 +121,28 @@ Quiz Content:
 
 Generate a complete Python script that:
 1. Solves the task described in the quiz content
-2. Submits the answer to the submission endpoint
+2. Submits the answer to the submission endpoint specified in the content
+3. Prints the full response JSON (which may contain the next quiz URL)
 
-The submission endpoint is likely at: {quiz_url.rsplit('/', 1)[0]}/submit
-
-Submit with this exact format:
+CRITICAL SUBMISSION REQUIREMENTS:
+- Extract the submission URL from the quiz content (look for text like "Post your answer to https://...")
+- If no URL is found in content, use: {quiz_url.rsplit('/', 1)[0]}/submit
+- Submit with this EXACT format:
 {{
     "email": os.getenv("STUDENT_EMAIL"),
     "secret": os.getenv("SECRET_KEY"),
     "url": "{quiz_url}",
     "answer": <calculated_answer>
 }}
+- The answer type depends on the question: number, string, boolean, base64 URI, or JSON object
+- Print the complete response JSON so we can check for next quiz URL
 
 IMPORTANT: 
 - Output ONLY Python code, no explanations
 - No markdown formatting or backticks
 - Make the script fully self-contained and executable
-- Extract submission URL from content if specified, otherwise use the base URL + /submit
-- Print debug information to help troubleshoot"""
+- Print debug information and the full submission response
+- Complete within 2 minutes"""
 
     print(f"Sending request to LLM API: {AIPIPE_URL}")
     print(f"Model: openai/gpt-4o-mini")
@@ -205,54 +209,77 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
 
 async def process_quiz(email: str, secret: str, url: str):
     """
-    Background task to process the quiz.
+    Background task to process the quiz and handle chained quiz URLs.
     """
+    current_url = url
+    max_retries = 2
+    
     try:
         print(f"Processing quiz for {email} at {url}")
         
-        # Step 1: Fetch the quiz page
-        print("Fetching page content...")
-        html_content = await fetch_page_content(url)
+        while current_url:
+            print(f"\n{'='*80}")
+            print(f"Solving quiz at: {current_url}")
+            print(f"{'='*80}\n")
+            
+            # Step 1: Fetch the quiz page
+            print("Fetching page content...")
+            html_content = await fetch_page_content(current_url)
+            
+            # Step 2: Decode base64 if present
+            print("Decoding content...")
+            decoded_content = decode_base64_content(html_content)
+            
+            print(f"Content preview (first 500 chars):\n{decoded_content[:500]}")
+            
+            # Step 3: Generate solver code using LLM
+            print("Generating solver code...")
+            solver_code = await generate_solver_code(decoded_content, current_url)
+            
+            # Step 4: Save the generated script
+            script_path = f"solver_{abs(hash(current_url))}.py"
+            with open(script_path, "w") as f:
+                f.write(solver_code)
+            
+            print(f"Generated script saved to {script_path}")
+            print("=" * 80)
+            print("FULL GENERATED SCRIPT:")
+            print(solver_code)
+            print("=" * 80)
+            
+            # Step 5: Execute the script
+            print("Executing solver script...")
+            stdout, stderr = await execute_solver_script(script_path)
+            
+            print("Script output:")
+            print(stdout)
+            
+            if stderr:
+                print("Script errors:")
+                print(stderr)
+            
+            # Clean up
+            try:
+                os.remove(script_path)
+            except:
+                pass
+            
+            # Check if there's a next URL in the output (indicating correct answer)
+            # The script should print the response which may contain a new URL
+            if "quiz-" in stdout or "/quiz" in stdout:
+                # Try to extract next URL from output
+                import re
+                url_match = re.search(r'https?://[^\s<>"\']+/quiz[^\s<>"\']*', stdout)
+                if url_match:
+                    current_url = url_match.group(0)
+                    print(f"\n✅ Moving to next quiz: {current_url}")
+                    continue
+            
+            # If no new URL found, we're done
+            print(f"\n✅ Quiz sequence completed!")
+            break
         
-        # Step 2: Decode base64 if present
-        print("Decoding content...")
-        decoded_content = decode_base64_content(html_content)
-        
-        print(f"Content preview (first 500 chars):\n{decoded_content[:500]}")
-        
-        # Step 3: Generate solver code using LLM
-        print("Generating solver code...")
-        solver_code = await generate_solver_code(decoded_content, url)
-        
-        # Step 4: Save the generated script
-        script_path = f"solver_{hash(url)}.py"
-        with open(script_path, "w") as f:
-            f.write(solver_code)
-        
-        print(f"Generated script saved to {script_path}")
-        print("=" * 80)
-        print("FULL GENERATED SCRIPT:")
-        print(solver_code)
-        print("=" * 80)
-        
-        # Step 5: Execute the script
-        print("Executing solver script...")
-        stdout, stderr = await execute_solver_script(script_path)
-        
-        print("Script output:")
-        print(stdout)
-        
-        if stderr:
-            print("Script errors:")
-            print(stderr)
-        
-        # Clean up
-        try:
-            os.remove(script_path)
-        except:
-            pass
-        
-        print(f"Quiz processing completed for {url}")
+        print(f"All quizzes completed for {email}")
         
     except Exception as e:
         print(f"Error processing quiz: {str(e)}")
@@ -261,26 +288,19 @@ async def process_quiz(email: str, secret: str, url: str):
 
 
 @app.post("/")
-async def receive_quiz(
-    request: QuizRequest,
-    background_tasks: BackgroundTasks
-):
+async def receive_quiz(request: QuizRequest):
     """
     Main endpoint to receive quiz requests.
+    Must verify secret and return 200 immediately, then process in background.
     """
     # Validate secret
     if request.secret != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Forbidden: Invalid secret")
     
-    # Add background task
-    background_tasks.add_task(
-        process_quiz,
-        request.email,
-        request.secret,
-        request.url
-    )
+    # Process quiz in background without blocking response
+    asyncio.create_task(process_quiz(request.email, request.secret, request.url))
     
-    # Return immediate 200 response
+    # Return immediate 200 response as required
     return JSONResponse(
         status_code=200,
         content={
