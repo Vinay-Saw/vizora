@@ -78,14 +78,14 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
         fn=solve_quiz,
         inputs=[quiz_url, email, secret],
         outputs=output,
-        api_name="solve_quiz"  # Add API name here
+        api_name="solve_quiz"
     )
     
     gr.Markdown("""
     ---
     ### About
     - **GitHub:** [Vinay-Saw/vizora](https://github.com/Vinay-Saw/vizora)
-    - **Powered by:** FastAPI, Playwright, OpenRouter LLMs
+    - **Powered by:** FastAPI, httpx, OpenRouter LLMs
     """)
 
 # Mount Gradio on FastAPI at /gradio path

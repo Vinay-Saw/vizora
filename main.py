@@ -3,12 +3,13 @@ import json
 import asyncio
 import subprocess
 import base64
+import re
 from typing import Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import httpx
-from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -34,34 +35,43 @@ class QuizResponse(BaseModel):
 
 async def fetch_page_content(url: str) -> str:
     """
-    Fetch page content using Playwright to handle JavaScript rendering.
+    Fetch page content using httpx and execute JavaScript manually if needed.
+    For pages with base64 encoded content, we'll decode it.
     """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            # Fetch the page
+            response = await client.get(url)
+            response.raise_for_status()
+            html_content = response.text
             
-            # Wait a bit for JavaScript to execute
-            await page.wait_for_timeout(2000)
+            # Parse with BeautifulSoup
+            soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Get the full page content
-            content = await page.content()
+            # Extract and execute JavaScript that decodes base64
+            scripts = soup.find_all('script')
+            decoded_content = []
             
-            # Also get the text content of the result div if it exists
-            try:
-                result_element = await page.query_selector("#result")
-                if result_element:
-                    result_text = await result_element.inner_text()
-                    content = f"{content}\n\n<!-- RESULT DIV CONTENT -->\n{result_text}"
-            except:
-                pass
+            for script in scripts:
+                script_text = script.string
+                if script_text and 'atob' in script_text:
+                    # Find base64 strings in atob() calls
+                    base64_matches = re.findall(r'atob\([\'"`]([A-Za-z0-9+/=]+)[\'"`]\)', script_text)
+                    for b64_str in base64_matches:
+                        try:
+                            decoded = base64.b64decode(b64_str).decode('utf-8')
+                            decoded_content.append(decoded)
+                        except Exception as e:
+                            print(f"Failed to decode base64: {e}")
             
-            await browser.close()
-            return content
+            # If we found decoded content, use that
+            if decoded_content:
+                return "\n\n".join(decoded_content)
+            
+            # Otherwise return the full HTML
+            return html_content
+            
         except Exception as e:
-            await browser.close()
             raise Exception(f"Failed to fetch page: {str(e)}")
 
 
@@ -69,8 +79,6 @@ def decode_base64_content(html_content: str) -> str:
     """
     Extract and decode base64 encoded content from HTML.
     """
-    import re
-    
     # Look for base64 encoded content in atob() calls
     pattern = r'atob\([\'"`]([A-Za-z0-9+/=]+)[\'"`]\)'
     matches = re.findall(pattern, html_content)
@@ -103,16 +111,17 @@ Given a quiz question, you must:
 
 CRITICAL REQUIREMENTS:
 - Generate ONLY valid Python code, no markdown backticks
-- Use httpx for all HTTP requests
+- Use httpx for all HTTP requests (async client)
 - Handle all imports at the top
 - Use environment variables for sensitive data
-- The submission URL pattern is typically: {base_url}/submit where base_url matches the quiz URL domain
+- Extract the submission URL from the quiz content
 - Format the answer according to requirements (number, string, boolean, JSON, or base64)
 - Print the final answer before submitting
+- Print the full response JSON after submission
 - Handle errors gracefully
 - Complete within 3 minutes
 
-Available libraries: httpx, pandas, beautifulsoup4, playwright, base64, json, os, re"""
+Available libraries: httpx, pandas, beautifulsoup4, lxml, base64, json, os, re, asyncio"""
 
     user_prompt = f"""Quiz URL: {quiz_url}
 
@@ -125,8 +134,8 @@ Generate a complete Python script that:
 3. Prints the full response JSON (which may contain the next quiz URL)
 
 CRITICAL SUBMISSION REQUIREMENTS:
-- Extract the submission URL from the quiz content (look for text like "Post your answer to https://...")
-- If no URL is found in content, use: {quiz_url.rsplit('/', 1)[0]}/submit
+- Extract the submission URL from the quiz content (look for "Post your answer to https://...")
+- If no URL is found, construct it from the quiz URL pattern
 - Submit with this EXACT format:
 {{
     "email": os.getenv("STUDENT_EMAIL"),
@@ -138,16 +147,14 @@ CRITICAL SUBMISSION REQUIREMENTS:
 - Print the complete response JSON so we can check for next quiz URL
 
 IMPORTANT: 
-- Output ONLY Python code, no explanations
-- No markdown formatting or backticks
+- Output ONLY Python code, no explanations or markdown
 - Make the script fully self-contained and executable
-- Print debug information and the full submission response
-- Complete within 2 minutes"""
+- Use asyncio and httpx.AsyncClient for HTTP requests
+- Print debug information and the full submission response"""
 
     print(f"Sending request to LLM API: {AIPIPE_URL}")
-    print(f"Model: openai/gpt-4o-mini")
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         try:
             response = await client.post(
                 AIPIPE_URL,
@@ -204,7 +211,6 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
         process.kill()
         await process.wait()
         return "", "Script execution timed out after 150 seconds."
-    return process.stdout, process.stderr
 
 
 async def process_quiz(email: str, secret: str, url: str):
@@ -264,11 +270,8 @@ async def process_quiz(email: str, secret: str, url: str):
             except:
                 pass
             
-            # Check if there's a next URL in the output (indicating correct answer)
-            # The script should print the response which may contain a new URL
+            # Check if there's a next URL in the output
             if "quiz-" in stdout or "/quiz" in stdout:
-                # Try to extract next URL from output
-                import re
                 url_match = re.search(r'https?://[^\s<>"\']+/quiz[^\s<>"\']*', stdout)
                 if url_match:
                     current_url = url_match.group(0)
@@ -313,7 +316,7 @@ async def receive_quiz(request: QuizRequest):
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "service": "promptlytics"}
+    return {"status": "healthy", "service": "vizora"}
 
 
 if __name__ == "__main__":
