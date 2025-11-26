@@ -23,6 +23,7 @@ ENV/
 # Git
 .git/
 .gitignore
+.gitattributes
 
 # Generated files
 solver_*.py
@@ -34,7 +35,12 @@ testing.py
 
 # Documentation
 README.md
+Docs.md
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
