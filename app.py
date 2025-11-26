@@ -29,7 +29,7 @@ async def solve_quiz(quiz_url: str, email: str = None, secret: str = None):
 
 
 # Create Gradio interface
-with gr.Blocks(theme=gr.themes.Soft(), title="Vizora Quiz Solver") as demo:
+with gr.Blocks(title="Vizora Quiz Solver") as demo:
     gr.Markdown("""
     # 🎯 Vizora - LLM-Powered Quiz Solver
     
