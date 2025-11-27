@@ -12,12 +12,28 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_here")
 STUDENT_EMAIL = os.getenv("STUDENT_EMAIL", "your_email@example.com")
 
-async def solve_quiz(quiz_url: str, email: str = None, secret: str = None):
+async def solve_quiz(quiz_url: str, email: str, secret: str):
     """
     Solve a quiz by calling the process_quiz function
+    Email and secret are mandatory and must match the configured values.
     """
+    # Normalize inputs
+    email = email.strip() if email else ""
+    secret = secret.strip() if secret else ""
+    
+    # Validate email is provided
     if not email:
-        email = STUDENT_EMAIL
+        return "❌ Error: Email is required"
+    
+    # Validate secret is provided
+    if not secret:
+        return "❌ Error: Secret key is required"
+    
+    # Validate email matches
+    if email != STUDENT_EMAIL:
+        return "❌ Forbidden: Invalid email"
+    
+    # Validate secret matches
     if secret != SECRET_KEY:
         return "❌ Forbidden: Invalid secret"
         
@@ -36,33 +52,32 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     An autonomous agent that solves data-related quizzes involving sourcing, preparation, analysis, and visualization.
     
     ## How to use:
-    1. Enter the quiz URL
-    2. (Optional) Override email and secret key
-    3. Click "Solve Quiz" and wait for results
+    1. Enter your email (required)
+    2. Enter your secret key (required)
+    3. Enter the quiz URL
+    4. Click "Solve Quiz" and wait for results
     
-    **Note:** Complex quizzes may take several minutes to solve.
+    **Note:** Email and secret key must match the configured values. Complex quizzes may take several minutes to solve.
     """)
     
     with gr.Row():
         with gr.Column():
+            email = gr.Textbox(
+                label="Email (required)",
+                placeholder="Enter your email",
+                lines=1
+            )
+            secret = gr.Textbox(
+                label="Secret Key (required)",
+                placeholder="Enter your secret key",
+                type="password",
+                lines=1
+            )
             quiz_url = gr.Textbox(
                 label="Quiz URL",
                 placeholder="https://example.com/quiz",
                 lines=1
             )
-            
-            with gr.Accordion("Advanced Options", open=False):
-                email = gr.Textbox(
-                    label="Email (optional)",
-                    placeholder="Leave empty to use .env value",
-                    lines=1
-                )
-                secret = gr.Textbox(
-                    label="Secret Key (optional)",
-                    placeholder="Leave empty to use .env value",
-                    type="password",
-                    lines=1
-                )
             
             solve_btn = gr.Button("🚀 Solve Quiz", variant="primary", size="lg")
         
