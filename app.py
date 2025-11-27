@@ -3,7 +3,8 @@ Gradio UI for Vizora Quiz Solver
 Provides web interface for Hugging Face Spaces
 """
 import gradio as gr
-from main import process_quiz
+import httpx
+import json
 import os
 from dotenv import load_dotenv
 
@@ -12,40 +13,22 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_here")
 STUDENT_EMAIL = os.getenv("STUDENT_EMAIL", "your_email@example.com")
 
-async def solve_quiz(quiz_url: str, email: str, secret: str):
-    """
-    Solve a quiz by calling the process_quiz function
-    Email and secret are mandatory and must match the configured values.
-    """
-    # Normalize inputs
-    email = email.strip() if email else ""
-    secret = secret.strip() if secret else ""
-    
-    # Validate email is provided
-    if not email:
-        return "❌ Error: Email is required"
-    
-    # Validate secret is provided
-    if not secret:
-        return "❌ Error: Secret key is required"
-    
-    # Validate email matches
-    if email != STUDENT_EMAIL:
-        return "❌ Forbidden: Invalid email"
-    
-    # Validate secret matches
-    if secret != SECRET_KEY:
-        return "❌ Forbidden: Invalid secret"
-        
-    try:
-        await process_quiz(email, secret, quiz_url)
-        return f"✅ Success!\n\nQuiz processing started for: {quiz_url}\n\nCheck the logs for detailed progress and results."
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
+async def solve_quiz(email: str, secret: str, url: str):
+    """Submit quiz request"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "http://localhost:8000/",  # Your FastAPI endpoint
+                json={"email": email, "secret": secret, "url": url},
+                timeout=300.0
+            )
+            return json.dumps(response.json(), indent=2)
+        except Exception as e:
+            return f"Error: {str(e)}"
 
 
 # Create Gradio interface
-with gr.Blocks(title="Vizora Quiz Solver") as demo:
+with gr.Blocks(title="Vizora - Quiz Solver") as demo:
     gr.Markdown("""
     # 🎯 Vizora - LLM-Powered Quiz Solver
     
@@ -91,7 +74,7 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     
     solve_btn.click(
         fn=solve_quiz,
-        inputs=[quiz_url, email, secret],
+        inputs=[email, secret, quiz_url],
         outputs=output,
         api_name="solve_quiz"
     )
@@ -104,12 +87,17 @@ with gr.Blocks(title="Vizora Quiz Solver") as demo:
     - **API Endpoint:** POST to this URL with email, secret, and quiz URL
     """)
 
-# Import FastAPI endpoint components
-from main import app as fastapi_app
-
-# Mount the Gradio interface on FastAPI
-app = gr.mount_gradio_app(fastapi_app, demo, path="/ui")
-
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    # Start FastAPI in background
+    import subprocess
+    import threading
+    
+    def run_fastapi():
+        subprocess.run(["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"])
+    
+    # Start FastAPI in separate thread
+    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+    fastapi_thread.start()
+    
+    # Launch Gradio
+    demo.launch(server_name="0.0.0.0", server_port=7860)
