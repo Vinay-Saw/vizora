@@ -17,7 +17,7 @@ This project builds an application that:
 1. Receives quiz URLs via FastAPI endpoint (POST `/`)
 2. Autonomously fetches and parses the quiz content using httpx and BeautifulSoup
 3. Decodes base64-encoded content and extracts quiz instructions
-4. Uses LLM (Claude 3.5 Sonnet / GPT-4o-mini) to generate Python solver code
+4. Uses LLM (GPT-4o-mini) to generate Python solver code
 5. Executes the generated solution and submits answers
 6. Handles chained multi-step quizzes automatically
 
@@ -167,7 +167,7 @@ During evaluation:
 **1. Timeout errors**
 - Increase httpx timeout in `fetch_page_content`
 - Optimize code generation prompt
-- LLM fallback from Claude to GPT-4o-mini is automatic
+- LLM fallback from GPT-4o-mini is automatic
 
 **2. Port already in use**
 ```bash
@@ -204,7 +204,7 @@ Developed by Vinay Saw using LLM models.
 
 - Course: Tools in Data Science, IIT Madras BS Degree
 - Instructor: Prof. Anand S
-- TAs: Jiraaj, Ritik, Siddharth
+- TAs: Jivraj, Ritik, Siddharth
 
 ---
 
