@@ -1,33 +1,39 @@
-# Environment files
-.env
-.env.*
-
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Virtual environments
-venv/
+.Python
 env/
+venv/
 ENV/
 .venv
+
+# Environment
+.env
+.env.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
 
-# Generated files
+# Generated solver scripts
 solver_*.py
+test*.py
+
+# Logs
 *.log
 
 # Testing
-test_*.py
-testing.py
+.pytest_cache/
+.coverage
+htmlcov/
 
-# OS
-.DS_Store
-Thumbs.db
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

@@ -311,7 +311,7 @@ async def process_quiz(email: str, secret: str, url: str):
     """
     current_url = url
     attempt = 0
-    max_attempts = 5
+    max_attempts = 20
     
     try:
         print(f"Processing quiz for {email} at {url}")
