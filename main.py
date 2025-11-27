@@ -4,11 +4,12 @@ import asyncio
 import subprocess
 import base64
 import re
+import httpx
+import random
 from typing import Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from google import genai

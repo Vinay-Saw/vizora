@@ -1,46 +1,20 @@
-# Environment files
-.env
-.env.*
-
-# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-
-# Virtual environments
-venv/
+.Python
 env/
+venv/
 ENV/
 .venv
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Git
-.git/
+.git
 .gitignore
-.gitattributes
-
-# Generated files
-solver_*.py
+*.md
+.env
+.env.local
 *.log
-
-# Testing
-test_*.py
-testing.py
-
-# Documentation
-README.md
-Docs.md
-
-# OS
+solver_*.py
+*.pyc
 .DS_Store
-Thumbs.db
-
-# Docker
-Dockerfile
-.dockerignore
+*.swp
+.pytest_cache/
