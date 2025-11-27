@@ -18,8 +18,8 @@ async def solve_quiz(quiz_url: str, email: str = None, secret: str = None):
     """
     if not email:
         email = STUDENT_EMAIL
-    if not secret:
-        secret = SECRET_KEY
+    if secret != SECRET_KEY:
+        return "❌ Forbidden: Invalid secret"
         
     try:
         await process_quiz(email, secret, quiz_url)
