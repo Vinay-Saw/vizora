@@ -27,7 +27,7 @@ This application is deployed on **Hugging Face Spaces**:
 
 - **Autonomous Quiz Solving**: Automatically solves complex data quizzes
 - **Multi-Step Processing**: Handles data sourcing, preparation, analysis, and visualization
-- **LLM-Powered**: Uses Claude 3.5 Sonnet (with GPT-4o-mini fallback) via AI Pipe for intelligent code generation
+- **LLM-Powered**: Uses GPT-4o-mini via AI Pipe for intelligent code generation
 - **Content Processing**: Extracts and decodes base64-encoded quiz content using BeautifulSoup
 - **REST API**: FastAPI backend for programmatic access
 - **Web UI**: Gradio interface for easy interaction
@@ -74,7 +74,7 @@ curl -X POST https://vinaysaw-vizora.hf.space/ \
 - **Frontend**: Gradio
 - **HTTP Client**: httpx (async)
 - **HTML Parsing**: BeautifulSoup4
-- **LLM**: Claude 3.5 Sonnet / GPT-4o-mini via AI Pipe
+- **LLM**: GPT-4o-mini via AI Pipe
 - **Language**: Python 3.11+
 
 ## 📦 Project Structure
@@ -175,7 +175,7 @@ MIT License - see LICENSE file for details
 
 - **Course:** Tools in Data Science, IIT Madras BS Degree
 - **Instructor:** Prof. Anand S
-- **TAs:** Jiraaj, Ritik, Siddharth
+- **TAs:** Jivraj, Ritik, Siddharth
 
 ## ⚠️ Disclaimer
 
