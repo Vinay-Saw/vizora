@@ -2,11 +2,11 @@ import httpx
 
 # Call the FastAPI endpoint at root (/)
 response = httpx.post(
-    "https://vinaysaw-vizora.hf.space/",
+    "http://localhost:8000/",
     json={
         "email": "email@example.com",
         "secret": "vinaykumar",
-        "url": "https://tds-llm-analysis.s-anand.net/demo"
+        "url": "https://tdsbasictest.vercel.app/quiz/9"
     }
 )
 

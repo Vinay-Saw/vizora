@@ -8,3 +8,4 @@ pandas==2.2.0
 lxml==5.1.0
 gradio==5.0.1
 requests>=2.32.2
+google-genai>=0.2.0

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from google import genai
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +22,10 @@ app = FastAPI()
 SECRET_KEY = os.getenv("SECRET_KEY")
 AIPIPE_TOKEN = os.getenv("AIPIPE_TOKEN")
 AIPIPE_URL = "https://aipipe.org/openrouter/v1/chat/completions"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# LLM Provider Selection: "gemini" or "aipipe"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")  # Default to aipipe
 
 class QuizRequest(BaseModel):
     email: str
@@ -97,9 +102,80 @@ def process_html_content(html_content: str, origin: str) -> str:
     return visible_text
 
 
+async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
+    """
+    Generate code using Gemini API.
+    """
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        # Combine system and user prompts for Gemini
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=full_prompt
+        )
+        
+        code = response.text
+        
+        # Clean up code - remove markdown if present
+        code = code.replace("```python", "").replace("```", "").strip()
+        
+        return code
+        
+    except Exception as e:
+        print(f"Gemini API error: {str(e)}")
+        raise Exception(f"Failed to generate code with Gemini: {str(e)}")
+
+
+async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-5-nano") -> str:
+    """
+    Generate code using AI Pipe API.
+    """
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            response = await client.post(
+                AIPIPE_URL,
+                headers={
+                    "Authorization": f"Bearer {AIPIPE_TOKEN}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 0.2
+                }
+            )
+            
+            if response.status_code != 200:
+                print(f"AI Pipe API error response: {response.text}")
+                # Fallback to GPT-4o-mini
+                if model != "openai/gpt-4o-mini":
+                    print("Retrying with GPT-4o-mini...")
+                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o-mini")
+                raise Exception(f"AI Pipe API failed with status {response.status_code}")
+            
+            result = response.json()
+            code = result["choices"][0]["message"]["content"]
+            
+            # Clean up code - remove markdown if present
+            code = code.replace("```python", "").replace("```", "").strip()
+            
+            return code
+            
+        except httpx.RequestError as e:
+            print(f"Request error: {str(e)}")
+            raise Exception(f"Failed to connect to AI Pipe API: {str(e)}")
+
+
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str) -> str:
     """
     Use LLM to generate Python code that solves the quiz.
+    Supports both Gemini and AI Pipe providers.
     """
     system_prompt = """You are an expert Python programmer that generates standalone Python scripts to solve data analysis tasks.
 
@@ -110,8 +186,11 @@ CRITICAL RULES:
 4. Calculate the ACTUAL answer based on the data
 5. Submit to the EXACT URL mentioned in the instructions
 6. The submission URL is usually: {origin}/submit
-7. Print debug information at each step
-8. Print the full response JSON after submission
+7. Print debug information at each step including DataFrame columns and data types
+8. ALWAYS print DataFrame.columns, DataFrame.dtypes, and DataFrame.head() to verify structure
+9. DO NOT assume column names - inspect the actual data first
+10. Understand data relationships (e.g., orders.items may reference products.id)
+11. Print the full response JSON after submission
 
 OUTPUT REQUIREMENTS:
 - Generate ONLY valid Python code, NO markdown backticks or explanations
@@ -119,6 +198,7 @@ OUTPUT REQUIREMENTS:
 - Import all libraries at the top
 - Use os.getenv() for email and secret
 - Handle errors gracefully
+- Inspect data structure before processing (use .columns, .dtypes, .head())
 
 Available libraries: httpx, pandas, beautifulsoup4, lxml, base64, json, os, re, asyncio"""
 
@@ -131,9 +211,40 @@ Quiz Content and Instructions:
 YOUR TASK:
 1. Read the quiz instructions carefully
 2. If it says "download file from URL", download that file
-3. If it says "calculate sum/average/etc.", do the actual calculation
-4. Extract the submission URL from instructions (usually mentioned as "POST to..." or "submit to...")
-5. Submit the calculated answer in the exact format requested
+3. ALWAYS inspect DataFrames first:
+   - Print df.columns.tolist() to see all column names
+   - Print df.dtypes to see data types
+   - Print df.head() to see sample data
+4. UNDERSTAND DATA RELATIONSHIPS:
+   - Column names may not match exactly (e.g., orders have "items" containing product IDs, products have "id")
+   - Look for foreign key relationships (e.g., user_id, product_id, items list, etc.)
+   - A column with a list of IDs (like "items": ["P100", "P200"]) likely references another table's "id" column
+5. When joining/filtering data:
+   - First understand what each dataset contains
+   - Identify the relationship columns (even if named differently)
+   - Use proper pandas operations (.isin(), .merge(), etc.)
+6. Extract the submission URL from instructions
+7. Submit the calculated answer in the exact format requested
+
+EXAMPLE PATTERN FOR DATA INSPECTION AND JOINING:
+```
+# Inspect all DataFrames first
+print("Orders columns:", orders_df.columns.tolist())
+print("Orders head:\\n", orders_df.head())
+print("Products columns:", products_df.columns.tolist())
+print("Products head:\\n", products_df.head())
+
+# Understand the relationship:
+# - orders_df has "items" column with list of product IDs
+# - products_df has "id" column with product IDs
+# - To get prices, iterate through items and lookup in products
+
+# Example join logic:
+for _, order in orders_df.iterrows():
+    product_ids_in_order = order['items']  # Use actual column name from inspection
+    for prod_id in product_ids_in_order:
+        price = products_df[products_df['id'] == prod_id]['price'].values[0]
+```
 
 SUBMISSION FORMAT:
 {{
@@ -153,62 +264,22 @@ The answer type depends on the question:
 IMPORTANT:
 - Generate ONLY Python code, no explanations
 - Make it fully executable
+- ALWAYS inspect data structure first
+- Understand column relationships even when names don't match
 - Print the submission response JSON (it may contain next quiz URL)
 - Complete within 2 minutes"""
 
-    print(f"Sending request to LLM API: {AIPIPE_URL}")
+    provider = LLM_PROVIDER.lower()
+    print(f"Using LLM provider: {provider}")
     
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        try:
-            response = await client.post(
-                AIPIPE_URL,
-                headers={
-                    "Authorization": f"Bearer {AIPIPE_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "anthropic/claude-3.5-sonnet",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "temperature": 0.2
-                }
-            )
-            
-            print(f"LLM API response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"LLM API error response: {response.text}")
-                # Fallback to GPT-4o-mini
-                print("Retrying with GPT-4o-mini...")
-                response = await client.post(
-                    AIPIPE_URL,
-                    headers={
-                        "Authorization": f"Bearer {AIPIPE_TOKEN}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "openai/gpt-4o-mini",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        "temperature": 0.2
-                    }
-                )
-            
-            result = response.json()
-            code = result["choices"][0]["message"]["content"]
-            
-            # Clean up code - remove markdown if present
-            code = code.replace("```python", "").replace("```", "").strip()
-            
-            return code
-            
-        except httpx.RequestError as e:
-            print(f"Request error: {str(e)}")
-            raise Exception(f"Failed to connect to LLM API: {str(e)}")
+    if provider == "gemini":
+        print("Generating code with Gemini API...")
+        return await generate_with_gemini(system_prompt, user_prompt)
+    elif provider == "aipipe":
+        print(f"Generating code with AI Pipe (openai/gpt-5-nano)...")
+        return await generate_with_aipipe(system_prompt, user_prompt)
+    else:
+        raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
 
 
 async def execute_solver_script(script_path: str) -> tuple[str, str]:
