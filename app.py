@@ -17,16 +17,20 @@ async def solve_quiz(quiz_url: str, email: str, secret: str):
     Solve a quiz by calling the process_quiz function
     Email and secret are mandatory and must match the configured values.
     """
+    # Normalize inputs
+    email = email.strip() if email else ""
+    secret = secret.strip() if secret else ""
+    
     # Validate email is provided
-    if not email or not email.strip():
+    if not email:
         return "❌ Error: Email is required"
     
     # Validate secret is provided
-    if not secret or not secret.strip():
+    if not secret:
         return "❌ Error: Secret key is required"
     
     # Validate email matches
-    if email.strip() != STUDENT_EMAIL:
+    if email != STUDENT_EMAIL:
         return "❌ Forbidden: Invalid email"
     
     # Validate secret matches
@@ -34,7 +38,7 @@ async def solve_quiz(quiz_url: str, email: str, secret: str):
         return "❌ Forbidden: Invalid secret"
         
     try:
-        await process_quiz(email.strip(), secret, quiz_url)
+        await process_quiz(email, secret, quiz_url)
         return f"✅ Success!\n\nQuiz processing started for: {quiz_url}\n\nCheck the logs for detailed progress and results."
     except Exception as e:
         return f"❌ Error: {str(e)}"
