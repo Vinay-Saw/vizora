@@ -1,10 +1,9 @@
 """
-Gradio UI for Vizora Quiz Solver
-Provides web interface for Hugging Face Spaces
+Combined FastAPI + Gradio app for Vizora Quiz Solver
+FastAPI at root, Gradio UI at /ui/
 """
 import gradio as gr
-import httpx
-import json
+from main import app as fastapi_app
 import os
 from dotenv import load_dotenv
 
@@ -13,22 +12,8 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_here")
 STUDENT_EMAIL = os.getenv("STUDENT_EMAIL", "your_email@example.com")
 
-async def solve_quiz(email: str, secret: str, url: str):
-    """Submit quiz request"""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                "http://localhost:8000/",  # Your FastAPI endpoint
-                json={"email": email, "secret": secret, "url": url},
-                timeout=300.0
-            )
-            return json.dumps(response.json(), indent=2)
-        except Exception as e:
-            return f"Error: {str(e)}"
-
-
 # Create Gradio interface
-with gr.Blocks(title="Vizora - Quiz Solver") as demo:
+with gr.Blocks(title="Vizora - Quiz Solver") as gradio_demo:
     gr.Markdown("""
     # 🎯 Vizora - LLM-Powered Quiz Solver
     
@@ -48,7 +33,8 @@ with gr.Blocks(title="Vizora - Quiz Solver") as demo:
             email = gr.Textbox(
                 label="Email (required)",
                 placeholder="Enter your email",
-                lines=1
+                lines=1,
+                value=STUDENT_EMAIL
             )
             secret = gr.Textbox(
                 label="Secret Key (required)",
@@ -67,37 +53,63 @@ with gr.Blocks(title="Vizora - Quiz Solver") as demo:
         with gr.Column():
             output = gr.Textbox(
                 label="Result",
-                lines=10,
-                placeholder="Results will appear here...",
+                lines=15,
+                placeholder="Results will appear here...\n\nNote: This will show acceptance confirmation. Check logs for detailed progress.",
                 interactive=False
             )
     
+    async def submit_quiz(email: str, secret: str, url: str):
+        """Submit quiz via API"""
+        import httpx
+        import json
+        
+        if not email or not secret or not url:
+            return "❌ Error: All fields are required"
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://vinaysaw-vizora.hf.space/",
+                    json={"email": email, "secret": secret, "url": url},
+                    timeout=30.0
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return f"✅ Success!\n\n{json.dumps(result, indent=2)}\n\nYour quiz is being processed. Check the application logs for detailed progress."
+                elif response.status_code == 403:
+                    return "❌ Error: Invalid secret key"
+                else:
+                    return f"❌ Error: {response.status_code}\n{response.text}"
+                    
+        except Exception as e:
+            return f"❌ Error: {str(e)}"
+    
     solve_btn.click(
-        fn=solve_quiz,
+        fn=submit_quiz,
         inputs=[email, secret, quiz_url],
-        outputs=output,
-        api_name="solve_quiz"
+        outputs=output
     )
     
     gr.Markdown("""
     ---
     ### About
     - **GitHub:** [Vinay-Saw/vizora](https://github.com/Vinay-Saw/vizora)
-    - **Powered by:** FastAPI, Playwright, OpenRouter LLMs
-    - **API Endpoint:** POST to this URL with email, secret, and quiz URL
+    - **Powered by:** FastAPI, Gemini/GPT, OpenRouter LLMs
+    - **FastAPI Endpoint:** [https://vinaysaw-vizora.hf.space/](https://vinaysaw-vizora.hf.space/)
+    - **API Documentation:** [https://vinaysaw-vizora.hf.space/docs](https://vinaysaw-vizora.hf.space/docs)
+    
+    ### API Usage
+    ```bash
+    curl -X POST https://vinaysaw-vizora.hf.space/ \\
+      -H "Content-Type: application/json" \\
+      -d '{"email": "your@email.com", "secret": "your_secret", "url": "https://quiz-url.com"}'
+    ```
     """)
 
+# Mount Gradio app to FastAPI at /ui/ path
+app = gr.mount_gradio_app(fastapi_app, gradio_demo, path="/ui")
+
 if __name__ == "__main__":
-    # Start FastAPI in background
-    import subprocess
-    import threading
-    
-    def run_fastapi():
-        subprocess.run(["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"])
-    
-    # Start FastAPI in separate thread
-    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
-    fastapi_thread.start()
-    
-    # Launch Gradio
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)

@@ -1,13 +1,12 @@
 ---
-title: Vizora Quiz Solver
-emoji: 📊
+title: Vizora
+emoji: 🎯
 colorFrom: blue
-colorTo: purple
+colorTo: green
 sdk: gradio
-sdk_version: 6.0.1
+sdk_version: 4.44.0
 app_file: app.py
-pinned: true
-license: mit
+pinned: false
 ---
 
 # 🎯 Vizora - LLM-Powered Quiz Solver
