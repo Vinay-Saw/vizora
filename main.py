@@ -6,6 +6,7 @@ import base64
 import re
 import httpx
 import random
+import time
 from typing import Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
@@ -27,6 +28,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # LLM Provider Selection: "gemini" or "aipipe"
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")  # Default to aipipe
+
+# Quiz timing constraints
+QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
+MAX_RETRIES_PER_QUIZ = 1  # Retry once if incorrect
 
 class QuizRequest(BaseModel):
     email: str
@@ -173,7 +178,7 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
             raise Exception(f"Failed to connect to AI Pipe API: {str(e)}")
 
 
-async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str) -> str:
+async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
     """
     Use LLM to generate Python code that solves the quiz.
     Supports both Gemini and AI Pipe providers.
@@ -203,11 +208,27 @@ OUTPUT REQUIREMENTS:
 
 Available libraries: httpx, pandas, beautifulsoup4, lxml, base64, json, os, re, asyncio"""
 
+    retry_context = ""
+    if previous_error:
+        retry_context = f"""
+
+⚠️ PREVIOUS ATTEMPT FAILED:
+{previous_error}
+
+IMPORTANT: Carefully review the error/feedback above and adjust your approach:
+- If the answer was incorrect, re-examine your logic and calculations
+- Double-check data types and conversions
+- Verify you're using the correct columns and relationships
+- Ensure proper aggregation/filtering logic
+- Print intermediate calculation steps for debugging
+"""
+
     user_prompt = f"""Quiz URL: {quiz_url}
 Origin (Base URL): {origin}
 
 Quiz Content and Instructions:
 {quiz_content[:10000]}
+{retry_context}
 
 YOUR TASK:
 1. Read the quiz instructions carefully
@@ -226,26 +247,6 @@ YOUR TASK:
    - Use proper pandas operations (.isin(), .merge(), etc.)
 6. Extract the submission URL from instructions
 7. Submit the calculated answer in the exact format requested
-
-EXAMPLE PATTERN FOR DATA INSPECTION AND JOINING:
-```
-# Inspect all DataFrames first
-print("Orders columns:", orders_df.columns.tolist())
-print("Orders head:\\n", orders_df.head())
-print("Products columns:", products_df.columns.tolist())
-print("Products head:\\n", products_df.head())
-
-# Understand the relationship:
-# - orders_df has "items" column with list of product IDs
-# - products_df has "id" column with product IDs
-# - To get prices, iterate through items and lookup in products
-
-# Example join logic:
-for _, order in orders_df.iterrows():
-    product_ids_in_order = order['items']  # Use actual column name from inspection
-    for prod_id in product_ids_in_order:
-        price = products_df[products_df['id'] == prod_id]['price'].values[0]
-```
 
 SUBMISSION FORMAT:
 {{
@@ -305,39 +306,68 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
         return "", "Script execution timed out after 150 seconds."
 
 
-async def process_quiz(email: str, secret: str, url: str):
+def extract_submission_result(stdout: str) -> dict:
     """
-    Background task to process the quiz and handle chained quiz URLs.
+    Extract submission result from script output.
+    Returns dict with 'correct', 'reason', 'url' if found.
     """
-    current_url = url
-    attempt = 0
-    max_attempts = 20
-    
     try:
-        print(f"Processing quiz for {email} at {url}")
+        # Look for JSON in output containing submission response
+        json_matches = re.findall(r'\{[^}]*"correct"[^}]*\}', stdout)
+        if json_matches:
+            # Try the last match (most likely the final submission response)
+            for match in reversed(json_matches):
+                try:
+                    result = json.loads(match)
+                    return result
+                except:
+                    continue
+    except Exception as e:
+        print(f"Failed to extract submission result: {e}")
+    
+    return {}
+
+
+async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: float, 
+                            previous_error: Optional[str] = None) -> tuple[Optional[str], bool, Optional[str]]:
+    """
+    Solve a single quiz with optional retry logic.
+    Returns: (next_url, success, error_message)
+    """
+    retry_count = 0
+    last_error = previous_error
+    
+    while retry_count <= MAX_RETRIES_PER_QUIZ:
+        elapsed_time = time.time() - quiz_start_time
+        remaining_time = QUIZ_TIME_LIMIT - elapsed_time
         
-        while current_url and attempt < max_attempts:
-            attempt += 1
-            print(f"\n{'='*80}")
-            print(f"Solving quiz #{attempt} at: {current_url}")
-            print(f"{'='*80}\n")
-            
+        if remaining_time < 30:  # Need at least 30 seconds to attempt
+            print(f"⏰ Insufficient time remaining ({remaining_time:.1f}s) - skipping retry")
+            return None, False, "Time limit exceeded"
+        
+        retry_suffix = f" (Retry {retry_count}/{MAX_RETRIES_PER_QUIZ})" if retry_count > 0 else ""
+        print(f"\n{'='*80}")
+        print(f"Solving quiz #{attempt}{retry_suffix} at: {current_url}")
+        print(f"Time remaining: {remaining_time:.1f}s")
+        print(f"{'='*80}\n")
+        
+        try:
             # Step 1: Fetch the quiz page
             print("Fetching page content...")
             html_content, origin = await fetch_page_content(current_url)
             
-            # Step 2: Process HTML (decode base64, replace origin spans)
+            # Step 2: Process HTML
             print(f"Processing content... (Origin: {origin})")
             processed_content = process_html_content(html_content, origin)
             
             print(f"Processed content preview (first 1000 chars):\n{processed_content[:1000]}")
             
-            # Step 3: Generate solver code using LLM
+            # Step 3: Generate solver code
             print("Generating solver code with LLM...")
-            solver_code = await generate_solver_code(processed_content, current_url, origin)
+            solver_code = await generate_solver_code(processed_content, current_url, origin, last_error)
             
-            # Step 4: Save the generated script
-            script_path = f"solver_{abs(hash(current_url))}_{attempt}.py"
+            # Step 4: Save script
+            script_path = f"solver_{abs(hash(current_url))}_{attempt}_{retry_count}.py"
             with open(script_path, "w") as f:
                 f.write(solver_code)
             
@@ -347,7 +377,7 @@ async def process_quiz(email: str, secret: str, url: str):
             print(solver_code)
             print("=" * 80)
             
-            # Step 5: Execute the script
+            # Step 5: Execute script
             print("Executing solver script...")
             stdout, stderr = await execute_solver_script(script_path)
             
@@ -364,42 +394,100 @@ async def process_quiz(email: str, secret: str, url: str):
             except:
                 pass
             
-            # Step 6: Check for next URL in the output
-            next_url = None
+            # Step 6: Parse submission result
+            result = extract_submission_result(stdout)
             
-            # Try to parse JSON response for next URL
-            try:
-                # Look for JSON in output
-                json_match = re.search(r'\{[^}]*"url"[^}]*\}', stdout)
-                if json_match:
-                    response_json = json.loads(json_match.group(0))
-                    if "url" in response_json and response_json.get("correct"):
-                        next_url = response_json["url"]
-            except:
-                pass
+            if result.get("correct"):
+                print(f"\n✅ Quiz solved correctly!")
+                next_url = result.get("url")
+                return next_url, True, None
             
-            # Fallback: search for quiz URLs in output
-            if not next_url:
-                url_match = re.search(r'https?://[^\s<>"\']+/[^\s<>"\']*quiz[^\s<>"\']*', stdout)
+            elif "correct" in result:  # Explicitly incorrect
+                reason = result.get("reason", "Unknown reason")
+                print(f"\n❌ Answer incorrect: {reason}")
+                
+                # Check if we should retry
+                if retry_count < MAX_RETRIES_PER_QUIZ:
+                    retry_count += 1
+                    last_error = f"Previous answer was incorrect. Reason: {reason}\nPrevious output:\n{stdout[-2000:]}"
+                    print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
+                    await asyncio.sleep(2)  # Brief pause before retry
+                    continue
+                else:
+                    print(f"⚠️ Max retries reached. Moving to next quiz.")
+                    next_url = result.get("url")
+                    return next_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
+            
+            else:
+                # No clear result - assume success and look for next URL
+                print(f"⚠️ Could not determine if answer was correct")
+                next_url = None
+                
+                # Try to find next URL in output
+                url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
                 if url_match:
                     next_url = url_match.group(0)
+                
+                return next_url, True, None
+        
+        except Exception as e:
+            print(f"❌ Error during quiz attempt: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            if retry_count < MAX_RETRIES_PER_QUIZ:
+                retry_count += 1
+                last_error = f"Previous attempt failed with error: {str(e)}"
+                print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
+                await asyncio.sleep(2)
+                continue
+            else:
+                return None, False, str(e)
+    
+    return None, False, "Max retries exceeded"
+
+
+async def process_quiz(email: str, secret: str, url: str):
+    """
+    Background task to process the quiz and handle chained quiz URLs.
+    """
+    current_url = url
+    attempt = 0
+    max_attempts = 20
+    overall_start_time = time.time()
+    
+    try:
+        print(f"Processing quiz sequence for {email} starting at {url}")
+        
+        while current_url and attempt < max_attempts:
+            attempt += 1
+            quiz_start_time = time.time()
+            
+            # Solve the quiz (with retry logic)
+            next_url, success, error = await solve_single_quiz(
+                current_url, attempt, quiz_start_time
+            )
+            
+            quiz_duration = time.time() - quiz_start_time
+            print(f"\nQuiz #{attempt} completed in {quiz_duration:.1f}s")
             
             if next_url and next_url != current_url:
                 current_url = next_url
-                print(f"\n✅ Moving to next quiz: {current_url}")
+                print(f"\n➡️ Moving to next quiz: {current_url}")
                 continue
             
-            # If no new URL found, we're done
+            # No next URL - sequence complete
             print(f"\n✅ Quiz sequence completed after {attempt} quiz(zes)!")
             break
         
         if attempt >= max_attempts:
-            print(f"⚠️  Reached maximum attempts ({max_attempts})")
+            print(f"⚠️ Reached maximum attempts ({max_attempts})")
         
-        print(f"All quizzes completed for {email}")
+        total_duration = time.time() - overall_start_time
+        print(f"\n🏁 All quizzes completed for {email} in {total_duration:.1f}s")
         
     except Exception as e:
-        print(f"Error processing quiz: {str(e)}")
+        print(f"❌ Error processing quiz sequence: {str(e)}")
         import traceback
         traceback.print_exc()
 
