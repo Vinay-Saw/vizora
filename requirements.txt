@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 fastapi
 uvicorn[standard]
 httpx
@@ -11,18 +10,4 @@ pandas
 numpy
 pyarrow
 gradio
-=======
-fastapi
-uvicorn[standard]
-httpx
-python-dotenv
-beautifulsoup4
-lxml
-pydantic
-google-genai>=1.0.0
-pandas
-numpy
-pyarrow
-gradio
->>>>>>> c31e06e (Add retry logic for incorrect quiz answers and improve error handling)
 html5lib
