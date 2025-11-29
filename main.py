@@ -374,9 +374,34 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
 For PDF: PyPDF2 or pdfplumber (if needed)
 For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
-For audio transcription: Use Whisper API or Google Speech-to-Text API
-  - Example: Use httpx to call OpenAI Whisper API or Google Cloud Speech API
-  - Include API authentication if provided in environment variables
+
+⚠️ AUDIO TRANSCRIPTION (CRITICAL):
+DO NOT use speech_recognition, pydub, or ffmpeg - they are NOT installed.
+Instead, use OpenAI Whisper API or similar web APIs:
+
+Example using OpenAI Whisper API:
+```python
+# Download audio file
+audio_response = await client.get("https://example.com/audio.opus")
+audio_data = audio_response.content
+
+# Use OpenAI Whisper API (if OPENAI_API_KEY available)
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if openai_api_key:
+    files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
+    data = {{"model": "whisper-1"}}
+    headers = {{"Authorization": f"Bearer {{openai_api_key}}"}}
+    
+    whisper_response = await client.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers=headers,
+        files=files,
+        data=data
+    )
+    transcription = whisper_response.json()["text"].lower()
+```
+
+If no API keys available, try to find transcription hints in the page content or use pattern matching.
 
 EXECUTION CONSTRAINTS:
 - Must complete within 120 seconds
