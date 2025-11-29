@@ -231,9 +231,12 @@ DATA PROCESSING RULES (ONLY IF DATA EXISTS):
    - Check the actual key names before accessing them
    - DO NOT assume key names - inspect first!
 
-2. After inspection, use the ACTUAL keys from the data:
-   - If data shows {"temp": 25}, use data["temp"], NOT data["temperature"]
-   - If columns are ["City", "Temp"], use df["Temp"], NOT df["temperature"]
+2. ⚠️ CRITICAL: After inspection, use ONLY the EXACT keys you see in the output:
+   - If you see {"coords": [0, 0]}, use data["coords"] - NOT data["coordinates"]
+   - If you see {"temp": 25}, use data["temp"] - NOT data["temperature"]
+   - If you see ["City", "Temp"], use df["Temp"] - NOT df["temperature"]
+   - LOOK AT THE INSPECTION OUTPUT and copy the exact key names
+   - DO NOT use similar or assumed key names - use EXACT matches only
 
 3. UNDERSTAND relationships between datasets:
    - Column names may differ (e.g., "items" vs "id", "product_id" vs "id")
@@ -288,14 +291,15 @@ EXECUTION CONSTRAINTS:
 
 REQUIRED CORRECTIONS:
 1. Re-read the instructions carefully - did you miss something?
-2. INSPECT THE DATA STRUCTURE - print it to see actual keys/columns
-3. Re-examine your data inspection output (columns, dtypes, head)
-4. Verify your logic matches what the question actually asks
-5. Check for off-by-one errors, wrong aggregations, or incorrect filters
-6. Ensure data type conversions are correct (string to int, etc.)
-7. Look for relationship mismatches between datasets
-8. Use ACTUAL key names from data, not assumed names
-9. Print MORE intermediate steps to debug the issue
+2. ⚠️ LOOK AT THE DATA INSPECTION OUTPUT - what are the EXACT key names?
+3. COPY the exact key names from inspection - don't use similar names
+4. Example: if you see "coords", use "coords" NOT "coordinates"
+5. Re-examine your data inspection output (columns, dtypes, head)
+6. Verify your logic matches what the question actually asks
+7. Check for off-by-one errors, wrong aggregations, or incorrect filters
+8. Ensure data type conversions are correct (string to int, etc.)
+9. Look for relationship mismatches between datasets
+10. Print MORE intermediate steps to debug the issue
 
 DO NOT repeat the same mistake. Adjust your approach based on the error above.
 """
@@ -330,7 +334,8 @@ COMMON PITFALLS TO AVOID:
 ❌ Using string manipulation (.find(), slicing) instead of BeautifulSoup for HTML
 ❌ ASSUMING key/column names without inspecting data first (CRITICAL!)
 ❌ Not printing data structure before accessing it
-❌ Assuming column names without checking
+❌ ⚠️ CRITICAL: Using similar key names instead of EXACT key names from inspection
+❌ Example error: seeing "coords" in data but using "coordinates" in code
 ❌ Not converting data types (e.g., string "123" vs int 123)
 ❌ Misunderstanding foreign key relationships
 ❌ Using wrong aggregation (sum vs count vs mean)
@@ -457,17 +462,22 @@ async def main():
         print("Raw data structure:")
         print(json.dumps(data, indent=2))  # See actual structure
         
-        # For pandas:
-        df = pd.DataFrame(data)
-        print(f"Columns: {{df.columns.tolist()}}")  # Check actual column names
-        print(f"Types: {{df.dtypes}}")
-        print(df.head(3))
+        # ⚠️ STOP HERE! Look at the output above and note the EXACT key names
+        # Example: if you see {{"coords": [0,0], "id": "A"}}
+        # Then the key is "coords" NOT "coordinates"
         
-        # Step 3: Use ACTUAL keys/columns from inspection
-        print("Calculating answer...")
-        # Example: if inspection showed "temp" not "temperature"
-        # max_row = df.loc[df['temp'].idxmax()]  # Use actual column name!
-        answer = <calculation_using_actual_keys>
+        # Step 3: Extract using EXACT keys from inspection
+        # WRONG: point_a['coordinates']  # Don't assume key names!
+        # RIGHT: point_a['coords']  # Use exact key from inspection
+        
+        point_a = next((item for item in data if item['id'] == 'A'), None)
+        point_b = next((item for item in data if item['id'] == 'B'), None)
+        
+        # Use the ACTUAL key name you saw in the inspection
+        x1, y1 = point_a['coords']  # NOT 'coordinates', use actual key!
+        x2, y2 = point_b['coords']  # NOT 'coordinates', use actual key!
+        
+        answer = <calculation>
         
         # Step 4: Submit
         print(f"FINAL ANSWER: {{answer}}")
