@@ -160,9 +160,9 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
             if response.status_code != 200:
                 print(f"AI Pipe API error response: {response.text}")
                 # Fallback to GPT-4o-mini
-                if model != "openai/gpt-5-nano":
-                    print("Retrying with GPT-5-nano...")
-                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-5-nano")
+                if model != "openai/gpt-4o":
+                    print("Retrying with GPT-4o...")
+                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
                 raise Exception(f"AI Pipe API failed with status {response.status_code}")
             
             result = response.json()
@@ -180,16 +180,26 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
 
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
     """
-    Optimized prompts for better quiz solving performance.
+    Use LLM to generate Python code that solves the quiz.
+    Supports both Gemini and AI Pipe providers with optimized prompts.
     """
     
     system_prompt = """You are an expert Python code generator that creates executable scripts to solve data analysis challenges.
 
+⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
+Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
+- If it says "answer is X", submit exactly X
+- If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
+- If it says "calculate Y from data", only then calculate Y
+- DO NOT invent steps that aren't explicitly mentioned in the instructions
+- DO NOT assume there's data to download unless explicitly told to download it
+
 CORE OBJECTIVE:
 Generate ONLY valid Python code (no markdown, no explanations) that:
-1. Downloads and processes data files as instructed
-2. Performs accurate calculations based on actual data
-3. Submits the answer to the correct endpoint
+1. Reads and follows the exact instructions provided
+2. Downloads and processes data ONLY if instructed to do so
+3. Performs accurate calculations based on actual data (if applicable)
+4. Submits the answer to the correct endpoint
 
 CODE STRUCTURE REQUIREMENTS:
 - Start with all imports at the top
@@ -198,7 +208,7 @@ CODE STRUCTURE REQUIREMENTS:
 - Include comprehensive error handling with try/except blocks
 - Print debug information at every major step
 
-DATA PROCESSING RULES (CRITICAL):
+DATA PROCESSING RULES (ONLY IF DATA EXISTS):
 1. ALWAYS inspect data structure first:
    - Print df.columns.tolist() for column names
    - Print df.dtypes for data types  
@@ -254,12 +264,13 @@ EXECUTION CONSTRAINTS:
 {previous_error}
 
 REQUIRED CORRECTIONS:
-1. Re-examine your data inspection output (columns, dtypes, head)
-2. Verify your logic matches what the question actually asks
-3. Check for off-by-one errors, wrong aggregations, or incorrect filters
-4. Ensure data type conversions are correct (string to int, etc.)
-5. Look for relationship mismatches between datasets
-6. Print MORE intermediate steps to debug the issue
+1. Re-read the instructions carefully - did you miss something?
+2. Re-examine your data inspection output (columns, dtypes, head)
+3. Verify your logic matches what the question actually asks
+4. Check for off-by-one errors, wrong aggregations, or incorrect filters
+5. Ensure data type conversions are correct (string to int, etc.)
+6. Look for relationship mismatches between datasets
+7. Print MORE intermediate steps to debug the issue
 
 DO NOT repeat the same mistake. Adjust your approach based on the error above.
 """
@@ -273,17 +284,18 @@ INSTRUCTIONS FROM PAGE:
 {retry_section}
 
 YOUR IMPLEMENTATION CHECKLIST:
-□ Parse instructions to understand what data to download
-□ Download file(s) using httpx
-□ Load data into appropriate structure (pandas DataFrame, JSON, etc.)
-□ INSPECT data structure (columns, types, shape, sample rows)
-□ IDENTIFY relationships between datasets
-□ Perform calculations matching the question requirements
+□ Read instructions carefully and understand what is being asked
+□ Identify if you need to download data (look for explicit URLs or instructions)
+□ If simple answer is given in instructions, submit that directly
+□ If data processing needed: download, inspect, calculate, then submit
 □ Format answer according to expected type
 □ Submit to {origin}/submit
 □ Print response JSON (may contain next quiz URL)
 
 COMMON PITFALLS TO AVOID:
+❌ Inventing data sources that don't exist in instructions
+❌ Assuming you need to download data when it's not mentioned
+❌ Not reading the instructions carefully enough
 ❌ Assuming column names without checking
 ❌ Not converting data types (e.g., string "123" vs int 123)
 ❌ Misunderstanding foreign key relationships
@@ -291,30 +303,15 @@ COMMON PITFALLS TO AVOID:
 ❌ Off-by-one errors in filtering/slicing
 ❌ Not handling whitespace in string columns
 
-SUBMISSION TEMPLATE:
+SIMPLE EXAMPLE (if instructions say "answer anything"):
 ```python
 import asyncio
 import httpx
-import pandas as pd
-import json
 import os
 
 async def main():
     async with httpx.AsyncClient(timeout=120.0) as client:
-        # Step 1: Download data
-        print("Downloading data...")
-        
-        # Step 2: Load and inspect
-        print("Loading data...")
-        print(f"Columns: {{df.columns.tolist()}}")
-        print(f"Types: {{df.dtypes}}")
-        print(df.head(3))
-        
-        # Step 3: Process and calculate
-        print("Calculating answer...")
-        
-        # Step 4: Submit
-        answer = <your_calculation>
+        answer = "anything you want"
         print(f"FINAL ANSWER: {{answer}}")
         
         submission = {{
@@ -330,20 +327,85 @@ async def main():
 asyncio.run(main())
 ```
 
-Generate the complete, executable Python script now."""
+DATA PROCESSING EXAMPLE (if instructions mention downloading and calculating):
+```python
+import asyncio
+import httpx
+import pandas as pd
+import json
+import os
 
-    # Call LLM with optimized prompts
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Step 1: Download data (use EXACT URL from instructions)
+        print("Downloading data...")
+        response = await client.get("<exact_url_from_instructions>")
+        data = response.json()  # or .text or .content depending on format
+        
+        # Step 2: Load and inspect
+        print("Loading data...")
+        df = pd.DataFrame(data)
+        print(f"Columns: {{df.columns.tolist()}}")
+        print(f"Types: {{df.dtypes}}")
+        print(df.head(3))
+        
+        # Step 3: Process and calculate (based on instructions)
+        print("Calculating answer...")
+        answer = <your_calculation_here>
+        
+        # Step 4: Submit
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("{origin}/submit", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+Now generate the complete, executable Python script that solves this specific quiz."""
+
     provider = LLM_PROVIDER.lower()
+    print(f"Using LLM provider: {provider}")
     
     if provider == "gemini":
+        print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
+        print(f"Generating code with AI Pipe (openai/gpt-4o-mini)...")
         return await generate_with_aipipe(system_prompt, user_prompt)
     else:
-        raise ValueError(f"Invalid LLM_PROVIDER: {provider}")
+        raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
 
 
-# Additional optimization: Better result extraction
+async def execute_solver_script(script_path: str) -> tuple[str, str]:
+    """
+    Execute the generated Python script and capture output.
+    """
+    env = os.environ.copy()
+    
+    process = await asyncio.create_subprocess_exec(
+        "python", script_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env
+    )
+    
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=150)
+        return stdout.decode(), stderr.decode()
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.wait()
+        return "", "Script execution timed out after 150 seconds."
+
+
 def extract_submission_result(stdout: str) -> dict:
     """
     Enhanced result extraction with multiple fallback strategies.
@@ -494,7 +556,7 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             
             if retry_count < MAX_RETRIES_PER_QUIZ:
                 retry_count += 1
-                last_error = f"Previous attempt failed with error: {str(e)}"
+                last_error = f"Previous attempt failed with error: {str(e)}\n{traceback.format_exc()}"
                 print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
                 await asyncio.sleep(2)
                 continue
@@ -531,6 +593,7 @@ async def process_quiz(email: str, secret: str, url: str):
             if next_url and next_url != current_url:
                 current_url = next_url
                 print(f"\n➡️ Moving to next quiz: {current_url}")
+                await asyncio.sleep(1)  # Brief pause between quizzes
                 continue
             
             # No next URL - sequence complete
