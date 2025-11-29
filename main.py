@@ -188,15 +188,17 @@ async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, pr
 CRITICAL RULES:
 1. Read the quiz instructions CAREFULLY
 2. If the quiz asks you to download a file, use httpx to download it
-3. If the quiz asks you to process data (CSV, PDF, etc.), use appropriate libraries
-4. Calculate the ACTUAL answer based on the data
-5. Submit to the EXACT URL mentioned in the instructions
-6. The submission URL is usually: {origin}/submit
-7. Print debug information at each step including DataFrame columns and data types
-8. ALWAYS print DataFrame.columns, DataFrame.dtypes, and DataFrame.head() to verify structure
-9. DO NOT assume column names - inspect the actual data first
-10. Understand data relationships (e.g., orders.items may reference products.id)
-11. Print the full response JSON after submission
+3. If no files are found, SCRAPE the HTML content (look for <table>, <ul>, or <div> classes).
+4. NEVER exit early with "return" if no data is found—always attempt to scrape something or submit a best guess.
+5. If the quiz asks you to process data (CSV, PDF, etc.), use appropriate libraries
+6. Calculate the ACTUAL answer based on the data
+7. Submit to the EXACT URL mentioned in the instructions
+8. The submission URL is usually: {origin}/submit
+9. Print debug information at each step including DataFrame columns and data types
+10. ALWAYS print DataFrame.columns, DataFrame.dtypes, and DataFrame.head() to verify structure
+11. DO NOT assume column names - inspect the actual data first
+12. Understand data relationships (e.g., orders.items may reference products.id)
+13. Print the full response JSON after submission
 
 OUTPUT REQUIREMENTS:
 - Generate ONLY valid Python code, NO markdown backticks or explanations
