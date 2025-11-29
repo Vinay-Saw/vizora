@@ -135,7 +135,7 @@ async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
         raise Exception(f"Failed to generate code with Gemini: {str(e)}")
 
 
-async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-5-nano") -> str:
+async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o-mini") -> str:
     """
     Generate code using AI Pipe API.
     """
@@ -160,9 +160,9 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
             if response.status_code != 200:
                 print(f"AI Pipe API error response: {response.text}")
                 # Fallback to GPT-4o-mini
-                if model != "openai/gpt-4o-mini":
-                    print("Retrying with GPT-4o-mini...")
-                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o-mini")
+                if model != "openai/gpt-4o":
+                    print("Retrying with GPT-4o...")
+                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
                 raise Exception(f"AI Pipe API failed with status {response.status_code}")
             
             result = response.json()
@@ -181,97 +181,321 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
     """
     Use LLM to generate Python code that solves the quiz.
-    Supports both Gemini and AI Pipe providers.
+    Supports both Gemini and AI Pipe providers with optimized prompts.
     """
-    system_prompt = """You are an expert Python programmer that generates standalone Python scripts to solve data analysis tasks.
+    
+    system_prompt = """You are an expert Python code generator that creates executable scripts to solve data analysis challenges.
 
-CRITICAL RULES:
-1. Read the quiz instructions CAREFULLY
-2. If the quiz asks you to download a file, use httpx to download it
-3. If no files are found, SCRAPE the HTML content (look for <table>, <ul>, or <div> classes).
-4. NEVER exit early with "return" if no data is found—always attempt to scrape something or submit a best guess.
-5. If the quiz asks you to process data (CSV, PDF, etc.), use appropriate libraries
-6. Calculate the ACTUAL answer based on the data
-7. Submit to the EXACT URL mentioned in the instructions
-8. The submission URL is usually: {origin}/submit
-9. Print debug information at each step including DataFrame columns and data types
-10. ALWAYS print DataFrame.columns, DataFrame.dtypes, and DataFrame.head() to verify structure
-11. DO NOT assume column names - inspect the actual data first
-12. Understand data relationships (e.g., orders.items may reference products.id)
-13. Print the full response JSON after submission
+⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
+Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
+- If it says "answer is X", submit exactly X
+- If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
+- If it says "Post to URL", use that EXACT URL including path segments (e.g., /submit/1, not /submit)
+- If it says "calculate Y from data", only then calculate Y
+- DO NOT invent steps that aren't explicitly mentioned in the instructions
+- DO NOT assume there's data to download unless explicitly told to download it
+- ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
 
-OUTPUT REQUIREMENTS:
-- Generate ONLY valid Python code, NO markdown backticks or explanations
-- Use asyncio and httpx.AsyncClient for async operations
-- Import all libraries at the top
-- Use os.getenv() for email and secret
-- Handle errors gracefully
-- Inspect data structure before processing (use .columns, .dtypes, .head())
+CORE OBJECTIVE:
+Generate ONLY valid Python code (no markdown, no explanations) that:
+1. Reads and follows the exact instructions provided
+2. Downloads and processes data ONLY if instructed to do so
+3. Performs accurate calculations based on actual data (if applicable)
+4. Submits the answer to the correct endpoint
 
-Available libraries: httpx, pandas, beautifulsoup4, lxml, base64, json, os, re, asyncio"""
+CODE STRUCTURE REQUIREMENTS:
+- Start with all imports at the top
+- Use async/await with httpx.AsyncClient for all HTTP operations
+- Use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY") for credentials
+- Include comprehensive error handling with try/except blocks
+- Print debug information at every major step
+- ALWAYS use BeautifulSoup for HTML parsing (from bs4 import BeautifulSoup)
+- NEVER use string manipulation methods like .find() or slicing for HTML parsing
 
-    retry_context = ""
-    if previous_error:
-        retry_context = f"""
+HTML PARSING RULES (CRITICAL):
+1. ALWAYS use BeautifulSoup to parse HTML content:
+   ```python
+   from bs4 import BeautifulSoup
+   soup = BeautifulSoup(html_content, 'html.parser')
+   element = soup.find('div', class_='hidden-key')
+   text = element.get_text(strip=True)
+   ```
+2. NEVER use string methods like .find(), .index(), or slicing on HTML
+3. Use .get_text(strip=True) to extract clean text from elements
+4. Use .find(), .find_all(), .select() for element selection
 
-⚠️ PREVIOUS ATTEMPT FAILED:
-{previous_error}
+DATA PROCESSING RULES (ONLY IF DATA EXISTS):
+1. ALWAYS inspect data structure BEFORE using it:
+   - For JSON: print(json.dumps(data, indent=2)) or print(data)
+   - For DataFrames: print df.columns.tolist(), df.dtypes, df.head(3), df.shape
+   - Check the actual key names before accessing them
+   - DO NOT assume key names - inspect first!
 
-IMPORTANT: Carefully review the error/feedback above and adjust your approach:
-- If the answer was incorrect, re-examine your logic and calculations
-- Double-check data types and conversions
-- Verify you're using the correct columns and relationships
-- Ensure proper aggregation/filtering logic
-- Print intermediate calculation steps for debugging
-"""
+2. ⚠️ CRITICAL: After inspection, use ONLY the EXACT keys you see in the output:
+   - If you see {"coords": [0, 0]}, use data["coords"] - NOT data["coordinates"]
+   - If you see {"temp": 25}, use data["temp"] - NOT data["temperature"]
+   - If you see ["City", "Temp"], use df["Temp"] - NOT df["temperature"]
+   - LOOK AT THE INSPECTION OUTPUT and copy the exact key names
+   - DO NOT use similar or assumed key names - use EXACT matches only
 
-    user_prompt = f"""Quiz URL: {quiz_url}
-Origin (Base URL): {origin}
+3. UNDERSTAND relationships between datasets:
+   - Column names may differ (e.g., "items" vs "id", "product_id" vs "id")
+   - Lists of IDs in one table usually reference another table's ID column
+   - Use .isin(), .merge(), or .explode() for proper joins
 
-Quiz Content and Instructions:
-{quiz_content[:10000]}
-{retry_context}
+4. CLEAN data before calculations:
+   - Strip whitespace from strings: df['col'].str.strip()
+   - Convert types explicitly: pd.to_numeric(), .astype(int), etc.
+   - Handle missing values: .dropna(), .fillna()
+   - Parse dates if needed: pd.to_datetime()
 
-YOUR TASK:
-1. Read the quiz instructions carefully
-2. If it says "download file from URL", download that file
-3. ALWAYS inspect DataFrames first:
-   - Print df.columns.tolist() to see all column names
-   - Print df.dtypes to see data types
-   - Print df.head() to see sample data
-4. UNDERSTAND DATA RELATIONSHIPS:
-   - Column names may not match exactly (e.g., orders have "items" containing product IDs, products have "id")
-   - Look for foreign key relationships (e.g., user_id, product_id, items list, etc.)
-   - A column with a list of IDs (like "items": ["P100", "P200"]) likely references another table's "id" column
-5. When joining/filtering data:
-   - First understand what each dataset contains
-   - Identify the relationship columns (even if named differently)
-   - Use proper pandas operations (.isin(), .merge(), etc.)
-6. Extract the submission URL from instructions
-7. Submit the calculated answer in the exact format requested
+5. VERIFY calculations:
+   - Print intermediate results
+   - Show row counts after filtering
+   - Display final answer before submission
 
 SUBMISSION FORMAT:
-{{
+POST to the EXACT URL specified in instructions (e.g., /submit/1, not /submit):
+{
     "email": os.getenv("STUDENT_EMAIL"),
     "secret": os.getenv("SECRET_KEY"),
-    "url": "{quiz_url}",
-    "answer": <your_calculated_answer>
-}}
+    "url": "<quiz_url>",
+    "answer": <calculated_value>
+}
 
-The answer type depends on the question:
-- Number: just the number (int or float)
-- String: a text string
-- Boolean: true or false
-- Base64: "data:image/png;base64,..."
-- JSON object: {{"key": "value"}}
+CRITICAL: Use the exact submission URL from the instructions, including all path segments!
 
-IMPORTANT:
-- Generate ONLY Python code, no explanations
-- Make it fully executable
-- ALWAYS inspect data structure first
-- Understand column relationships even when names don't match
-- Print the submission response JSON (it may contain next quiz URL)
-- Complete within 2 minutes"""
+Answer types based on question:
+- Numeric: int or float (not string)
+- String: text value
+- Boolean: true/false
+- List: ["item1", "item2"]
+- Object: {"key": "value"}
+
+AVAILABLE LIBRARIES:
+httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
+For PDF: PyPDF2 or pdfplumber (if needed)
+For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
+
+EXECUTION CONSTRAINTS:
+- Must complete within 120 seconds
+- Print "FINAL ANSWER:" before the answer value
+- Print the full response JSON after submission"""
+
+    # Build retry context if there was a previous error
+    retry_section = ""
+    if previous_error:
+        retry_section = f"""
+⚠️ PREVIOUS ATTEMPT FAILED - CRITICAL FEEDBACK:
+{previous_error}
+
+REQUIRED CORRECTIONS:
+1. Re-read the instructions carefully - did you miss something?
+2. ⚠️ LOOK AT THE DATA INSPECTION OUTPUT - what are the EXACT key names?
+3. COPY the exact key names from inspection - don't use similar names
+4. Example: if you see "coords", use "coords" NOT "coordinates"
+5. Re-examine your data inspection output (columns, dtypes, head)
+6. Verify your logic matches what the question actually asks
+7. Check for off-by-one errors, wrong aggregations, or incorrect filters
+8. Ensure data type conversions are correct (string to int, etc.)
+9. Look for relationship mismatches between datasets
+10. Print MORE intermediate steps to debug the issue
+
+DO NOT repeat the same mistake. Adjust your approach based on the error above.
+"""
+
+    user_prompt = f"""QUIZ INFORMATION:
+URL: {quiz_url}
+Origin: {origin}
+
+INSTRUCTIONS FROM PAGE:
+{quiz_content[:12000]}
+{retry_section}
+
+YOUR IMPLEMENTATION CHECKLIST:
+□ Read instructions carefully and understand what is being asked
+□ Note the EXACT submission URL including all path segments (e.g., /submit/1)
+□ Identify if you need to download data (look for explicit URLs or instructions)
+□ If API requires authentication, check for API keys or headers in instructions
+□ If HTML parsing needed, use BeautifulSoup (NEVER string manipulation)
+□ INSPECT data structure BEFORE accessing (print JSON or DataFrame structure)
+□ Use ACTUAL key/column names from inspection (don't assume names!)
+□ If simple answer is given in instructions, submit that directly
+□ If data processing needed: download, inspect, calculate, then submit
+□ Format answer according to expected type
+□ Submit to the EXACT URL from instructions (not a modified version)
+□ Print response JSON (may contain next quiz URL)
+
+COMMON PITFALLS TO AVOID:
+❌ Inventing data sources that don't exist in instructions
+❌ Assuming you need to download data when it's not mentioned
+❌ Not reading the instructions carefully enough
+❌ Using wrong submission URL (check for /submit/1 vs /submit)
+❌ Using string manipulation (.find(), slicing) instead of BeautifulSoup for HTML
+❌ ASSUMING key/column names without inspecting data first (CRITICAL!)
+❌ Not printing data structure before accessing it
+❌ ⚠️ CRITICAL: Using similar key names instead of EXACT key names from inspection
+❌ Example error: seeing "coords" in data but using "coordinates" in code
+❌ Not converting data types (e.g., string "123" vs int 123)
+❌ Misunderstanding foreign key relationships
+❌ Using wrong aggregation (sum vs count vs mean)
+❌ Off-by-one errors in filtering/slicing
+❌ Not handling whitespace in string columns
+
+SIMPLE EXAMPLE (if instructions say "answer anything"):
+```python
+import asyncio
+import httpx
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        answer = "anything you want"
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("{origin}/submit", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+HTML PARSING EXAMPLE (BeautifulSoup - REQUIRED for HTML):
+```python
+import asyncio
+import httpx
+from bs4 import BeautifulSoup
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Download HTML
+        response = await client.get("<quiz_url>")
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract using BeautifulSoup (NOT string methods)
+        element = soup.find('div', class_='hidden-key')
+        text = element.get_text(strip=True)
+        
+        answer = text[::-1]  # reverse if needed
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        # Submit to EXACT URL from instructions (e.g., /submit/1)
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("<exact_submit_url>", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+HTML PARSING EXAMPLE (if instructions mention finding element in HTML):
+```python
+import asyncio
+import httpx
+from bs4 import BeautifulSoup
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Step 1: Download HTML page
+        print("Downloading HTML page...")
+        response = await client.get("<exact_quiz_url>")
+        html_content = response.text
+        
+        # Step 2: Parse with BeautifulSoup (NEVER use string methods)
+        print("Parsing HTML...")
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Find element (e.g., div with class="hidden-key")
+        element = soup.find('div', class_='hidden-key')
+        text = element.get_text(strip=True)
+        print(f"Extracted text: {{text}}")
+        
+        # Step 3: Process text (e.g., reverse it)
+        answer = text[::-1]
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        # Step 4: Submit to EXACT URL from instructions
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "<exact_quiz_url>",
+            "answer": answer
+        }}
+        
+        # Use EXACT submission URL including path segments
+        response = await client.post("<exact_submit_url_from_instructions>", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+DATA PROCESSING EXAMPLE (if instructions mention downloading and calculating):
+```python
+import asyncio
+import httpx
+import pandas as pd
+import json
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Step 1: Download data (use EXACT URL from instructions)
+        print("Downloading data...")
+        headers = {{"X-API-Key": "key-if-needed"}}  # if auth required
+        response = await client.get("<exact_url_from_instructions>", headers=headers)
+        data = response.json()
+        
+        # Step 2: INSPECT data structure FIRST (CRITICAL!)
+        print("Raw data structure:")
+        print(json.dumps(data, indent=2))  # See actual structure
+        
+        # ⚠️ STOP HERE! Look at the output above and note the EXACT key names
+        # Example: if you see {{"coords": [0,0], "id": "A"}}
+        # Then the key is "coords" NOT "coordinates"
+        
+        # Step 3: Extract using EXACT keys from inspection
+        # WRONG: point_a['coordinates']  # Don't assume key names!
+        # RIGHT: point_a['coords']  # Use exact key from inspection
+        
+        point_a = next((item for item in data if item['id'] == 'A'), None)
+        point_b = next((item for item in data if item['id'] == 'B'), None)
+        
+        # Use the ACTUAL key name you saw in the inspection
+        x1, y1 = point_a['coords']  # NOT 'coordinates', use actual key!
+        x2, y2 = point_b['coords']  # NOT 'coordinates', use actual key!
+        
+        answer = <calculation>
+        
+        # Step 4: Submit
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("<exact_submit_url>", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+Now generate the complete, executable Python script that solves this specific quiz."""
 
     provider = LLM_PROVIDER.lower()
     print(f"Using LLM provider: {provider}")
@@ -280,7 +504,7 @@ IMPORTANT:
         print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
-        print(f"Generating code with AI Pipe (openai/gpt-5-nano)...")
+        print(f"Generating code with AI Pipe (openai/gpt-4o-mini)...")
         return await generate_with_aipipe(system_prompt, user_prompt)
     else:
         raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
@@ -310,22 +534,80 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
 
 def extract_submission_result(stdout: str) -> dict:
     """
-    Extract submission result from script output.
-    Returns dict with 'correct', 'reason', 'url' if found.
+    Enhanced result extraction with multiple fallback strategies.
     """
-    try:
-        # Look for JSON in output containing submission response
-        json_matches = re.findall(r'\{[^}]*"correct"[^}]*\}', stdout)
-        if json_matches:
-            # Try the last match (most likely the final submission response)
-            for match in reversed(json_matches):
-                try:
-                    result = json.loads(match)
+    # Strategy 1: Look for explicit JSON response (most reliable)
+    json_patterns = [
+        r'Response JSON:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
+        r'Submission response:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
+        r'(\{[^}]*"correct":\s*(?:true|false|True|False)[^}]*\})',
+    ]
+    
+    for pattern in json_patterns:
+        matches = re.findall(pattern, stdout, re.IGNORECASE | re.DOTALL)
+        for match in reversed(matches):
+            try:
+                # Handle both single and double quotes
+                cleaned = match.replace("'", '"')
+                # Try to parse as JSON
+                result = json.loads(cleaned)
+                if "correct" in result:
+                    # Ensure we have the URL field if it exists in the output
+                    if "url" not in result:
+                        url_match = re.search(r'"url":\s*"([^"]+)"', match)
+                        if url_match:
+                            result["url"] = url_match.group(1)
                     return result
+            except:
+                # If JSON parsing fails, try manual extraction
+                try:
+                    result = {}
+                    correct_match = re.search(r'"correct":\s*(true|false|True|False)', match, re.IGNORECASE)
+                    if correct_match:
+                        result["correct"] = correct_match.group(1).lower() == "true"
+                    
+                    reason_match = re.search(r'"reason":\s*"([^"]+)"', match)
+                    if reason_match:
+                        result["reason"] = reason_match.group(1)
+                    
+                    url_match = re.search(r'"url":\s*"([^"]+)"', match)
+                    if url_match:
+                        result["url"] = url_match.group(1)
+                    
+                    if "correct" in result:
+                        return result
                 except:
                     continue
-    except Exception as e:
-        print(f"Failed to extract submission result: {e}")
+    
+    # Strategy 2: Look for success indicators
+    if re.search(r'correct.*true', stdout, re.IGNORECASE):
+        # Try to extract URL
+        url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+        return {
+            "correct": True,
+            "url": url_match.group(0) if url_match else None
+        }
+    
+    # Strategy 3: Look for error messages with URL extraction
+    if re.search(r'correct.*false|incorrect|wrong', stdout, re.IGNORECASE):
+        reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
+        
+        # Try to find URL in JSON format first
+        url_match = re.search(r'"url":\s*"([^"]+)"', stdout)
+        next_url = None
+        if url_match:
+            next_url = url_match.group(1)
+        else:
+            # Fallback: look for any quiz URL in output
+            url_match2 = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+            if url_match2:
+                next_url = url_match2.group(0)
+        
+        return {
+            "correct": False,
+            "reason": reason_match.group(1) if reason_match else "Unknown error",
+            "url": next_url
+        }
     
     return {}
 
@@ -406,6 +688,7 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             
             elif "correct" in result:  # Explicitly incorrect
                 reason = result.get("reason", "Unknown reason")
+                next_quiz_url = result.get("url")
                 print(f"\n❌ Answer incorrect: {reason}")
                 
                 # Check if we should retry
@@ -417,8 +700,12 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                     continue
                 else:
                     print(f"⚠️ Max retries reached. Moving to next quiz.")
-                    next_url = result.get("url")
-                    return next_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
+                    # Return the next URL from the response if available
+                    if next_quiz_url:
+                        print(f"📋 Next quiz URL from response: {next_quiz_url}")
+                        return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
+                    else:
+                        return None, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
             
             else:
                 # No clear result - assume success and look for next URL
@@ -439,7 +726,7 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             
             if retry_count < MAX_RETRIES_PER_QUIZ:
                 retry_count += 1
-                last_error = f"Previous attempt failed with error: {str(e)}"
+                last_error = f"Previous attempt failed with error: {str(e)}\n{traceback.format_exc()}"
                 print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
                 await asyncio.sleep(2)
                 continue
@@ -476,6 +763,7 @@ async def process_quiz(email: str, secret: str, url: str):
             if next_url and next_url != current_url:
                 current_url = next_url
                 print(f"\n➡️ Moving to next quiz: {current_url}")
+                await asyncio.sleep(1)  # Brief pause between quizzes
                 continue
             
             # No next URL - sequence complete
