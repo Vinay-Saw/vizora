@@ -200,17 +200,26 @@ RESPONSE HANDLING (CRITICAL):
 ⚠️ Server responses may be HTML, JSON, or plain text. ALWAYS handle this properly:
 ```python
 response = await client.post(url, json=submission)
+print(f"\n{'='*80}")
+print("SUBMISSION RESPONSE")
+print(f"{'='*80}")
 print(f"HTTP Status: {response.status_code}")
-print(f"Response Content-Type: {response.headers.get('content-type', 'unknown')}")
+print(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
+print(f"Response Headers: {dict(response.headers)}")
 
 # Try JSON first, fallback to text
 try:
     result = response.json()
-    print("Response JSON:", result)
-except:
-    print("Response Text:", response.text[:500])
+    print("Response JSON:")
+    print(json.dumps(result, indent=2))
+except Exception as e:
+    print(f"JSON parsing failed: {e}")
+    print("Response Text:")
+    print(response.text[:1000])
+print(f"{'='*80}\n")
 ```
-NEVER assume response.json() will work - always use try/except!
+
+NEVER assume response.json() will work - always use try/except and print both attempts!
 
 CORE OBJECTIVE:
 Generate ONLY valid Python code (no markdown, no explanations) that:
@@ -370,28 +379,42 @@ SIMPLE EXAMPLE (if instructions say "answer anything"):
 import asyncio
 import httpx
 import os
+import json
 
 async def main():
     async with httpx.AsyncClient(timeout=120.0) as client:
         answer = "anything you want"
-        print(f"FINAL ANSWER: {{answer}}")
+        print(f"FINAL ANSWER: {answer}")
         
-        submission = {{
+        submission = {
             "email": os.getenv("STUDENT_EMAIL"),
             "secret": os.getenv("SECRET_KEY"),
             "url": "{quiz_url}",
             "answer": answer
-        }}
+        }
+        
+        print(f"\nSubmitting to: {origin}/submit")
+        print(f"Payload: {json.dumps(submission, indent=2)}")
         
         response = await client.post("{origin}/submit", json=submission)
-        print(f"HTTP Status: {{response.status_code}}")
+        
+        # Always print full response details
+        print(f"\n{'='*80}")
+        print("SUBMISSION RESPONSE")
+        print(f"{'='*80}")
+        print(f"HTTP Status: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
         
         # Handle both JSON and non-JSON responses
         try:
             result = response.json()
-            print("Response JSON:", result)
-        except:
-            print("Response Text:", response.text[:500])
+            print("Response JSON:")
+            print(json.dumps(result, indent=2))
+        except Exception as e:
+            print(f"JSON parsing failed: {e}")
+            print("Response Text:")
+            print(response.text[:1000])
+        print(f"{'='*80}\n")
 
 asyncio.run(main())
 ```
@@ -514,7 +537,21 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
     
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=150)
-        return stdout.decode(), stderr.decode()
+        stdout_text = stdout.decode()
+        stderr_text = stderr.decode()
+        
+        # Enhanced logging for submission responses
+        print("\n" + "="*80)
+        print("SCRIPT EXECUTION COMPLETE")
+        print("="*80)
+        print("\n--- STDOUT ---")
+        print(stdout_text)
+        if stderr_text:
+            print("\n--- STDERR ---")
+            print(stderr_text)
+        print("="*80 + "\n")
+        
+        return stdout_text, stderr_text
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
