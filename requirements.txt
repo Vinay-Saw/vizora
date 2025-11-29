@@ -11,3 +11,6 @@ numpy
 pyarrow
 gradio
 html5lib
+pydub
+SpeechRecognition
+pyaudio
