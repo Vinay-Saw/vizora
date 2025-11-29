@@ -135,7 +135,7 @@ async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
         raise Exception(f"Failed to generate code with Gemini: {str(e)}")
 
 
-async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o-mini") -> str:
+async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o") -> str:
     """
     Generate code using AI Pipe API.
     """
@@ -162,7 +162,7 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
                 # Fallback to GPT-4o-mini
                 if model != "openai/gpt-4o":
                     print("Retrying with GPT-4o...")
-                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
+                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o-mini")
                 raise Exception(f"AI Pipe API failed with status {response.status_code}")
             
             result = response.json()
