@@ -180,150 +180,207 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
 
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
     """
-    Use LLM to generate Python code that solves the quiz.
-    Supports both Gemini and AI Pipe providers.
+    Optimized prompts for better quiz solving performance.
     """
-    system_prompt = """You are an expert Python programmer that generates standalone Python scripts to solve data analysis tasks.
+    
+    system_prompt = """You are an expert Python code generator that creates executable scripts to solve data analysis challenges.
 
-CRITICAL RULES:
-1. Read the quiz instructions CAREFULLY
-2. If the quiz asks you to download a file, use httpx to download it
-3. If the quiz asks you to process data (CSV, PDF, etc.), use appropriate libraries
-4. Calculate the ACTUAL answer based on the data
-5. Submit to the EXACT URL mentioned in the instructions
-6. The submission URL is usually: {origin}/submit
-7. Print debug information at each step including DataFrame columns and data types
-8. ALWAYS print DataFrame.columns, DataFrame.dtypes, and DataFrame.head() to verify structure
-9. DO NOT assume column names - inspect the actual data first
-10. Understand data relationships (e.g., orders.items may reference products.id)
-11. Print the full response JSON after submission
+CORE OBJECTIVE:
+Generate ONLY valid Python code (no markdown, no explanations) that:
+1. Downloads and processes data files as instructed
+2. Performs accurate calculations based on actual data
+3. Submits the answer to the correct endpoint
 
-OUTPUT REQUIREMENTS:
-- Generate ONLY valid Python code, NO markdown backticks or explanations
-- Use asyncio and httpx.AsyncClient for async operations
-- Import all libraries at the top
-- Use os.getenv() for email and secret
-- Handle errors gracefully
-- Inspect data structure before processing (use .columns, .dtypes, .head())
+CODE STRUCTURE REQUIREMENTS:
+- Start with all imports at the top
+- Use async/await with httpx.AsyncClient for all HTTP operations
+- Use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY") for credentials
+- Include comprehensive error handling with try/except blocks
+- Print debug information at every major step
 
-Available libraries: httpx, pandas, beautifulsoup4, lxml, base64, json, os, re, asyncio"""
+DATA PROCESSING RULES (CRITICAL):
+1. ALWAYS inspect data structure first:
+   - Print df.columns.tolist() for column names
+   - Print df.dtypes for data types  
+   - Print df.head(3) for sample data
+   - Print df.shape for dimensions
 
-    retry_context = ""
-    if previous_error:
-        retry_context = f"""
+2. UNDERSTAND relationships between datasets:
+   - Column names may differ (e.g., "items" vs "id", "product_id" vs "id")
+   - Lists of IDs in one table usually reference another table's ID column
+   - Use .isin(), .merge(), or .explode() for proper joins
 
-⚠️ PREVIOUS ATTEMPT FAILED:
-{previous_error}
+3. CLEAN data before calculations:
+   - Strip whitespace from strings: df['col'].str.strip()
+   - Convert types explicitly: pd.to_numeric(), .astype(int), etc.
+   - Handle missing values: .dropna(), .fillna()
+   - Parse dates if needed: pd.to_datetime()
 
-IMPORTANT: Carefully review the error/feedback above and adjust your approach:
-- If the answer was incorrect, re-examine your logic and calculations
-- Double-check data types and conversions
-- Verify you're using the correct columns and relationships
-- Ensure proper aggregation/filtering logic
-- Print intermediate calculation steps for debugging
-"""
-
-    user_prompt = f"""Quiz URL: {quiz_url}
-Origin (Base URL): {origin}
-
-Quiz Content and Instructions:
-{quiz_content[:10000]}
-{retry_context}
-
-YOUR TASK:
-1. Read the quiz instructions carefully
-2. If it says "download file from URL", download that file
-3. ALWAYS inspect DataFrames first:
-   - Print df.columns.tolist() to see all column names
-   - Print df.dtypes to see data types
-   - Print df.head() to see sample data
-4. UNDERSTAND DATA RELATIONSHIPS:
-   - Column names may not match exactly (e.g., orders have "items" containing product IDs, products have "id")
-   - Look for foreign key relationships (e.g., user_id, product_id, items list, etc.)
-   - A column with a list of IDs (like "items": ["P100", "P200"]) likely references another table's "id" column
-5. When joining/filtering data:
-   - First understand what each dataset contains
-   - Identify the relationship columns (even if named differently)
-   - Use proper pandas operations (.isin(), .merge(), etc.)
-6. Extract the submission URL from instructions
-7. Submit the calculated answer in the exact format requested
+4. VERIFY calculations:
+   - Print intermediate results
+   - Show row counts after filtering
+   - Display final answer before submission
 
 SUBMISSION FORMAT:
-{{
+POST to {origin}/submit with JSON:
+{
     "email": os.getenv("STUDENT_EMAIL"),
     "secret": os.getenv("SECRET_KEY"),
-    "url": "{quiz_url}",
-    "answer": <your_calculated_answer>
-}}
+    "url": "<quiz_url>",
+    "answer": <calculated_value>
+}
 
-The answer type depends on the question:
-- Number: just the number (int or float)
-- String: a text string
-- Boolean: true or false
-- Base64: "data:image/png;base64,..."
-- JSON object: {{"key": "value"}}
+Answer types based on question:
+- Numeric: int or float (not string)
+- String: text value
+- Boolean: true/false
+- List: ["item1", "item2"]
+- Object: {"key": "value"}
 
-IMPORTANT:
-- Generate ONLY Python code, no explanations
-- Make it fully executable
-- ALWAYS inspect data structure first
-- Understand column relationships even when names don't match
-- Print the submission response JSON (it may contain next quiz URL)
-- Complete within 2 minutes"""
+AVAILABLE LIBRARIES:
+httpx, pandas, json, os, asyncio, base64, re, numpy
+For PDF: PyPDF2 or pdfplumber (if needed)
 
+EXECUTION CONSTRAINTS:
+- Must complete within 120 seconds
+- Print "FINAL ANSWER:" before the answer value
+- Print the full response JSON after submission"""
+
+    # Build retry context if there was a previous error
+    retry_section = ""
+    if previous_error:
+        retry_section = f"""
+⚠️ PREVIOUS ATTEMPT FAILED - CRITICAL FEEDBACK:
+{previous_error}
+
+REQUIRED CORRECTIONS:
+1. Re-examine your data inspection output (columns, dtypes, head)
+2. Verify your logic matches what the question actually asks
+3. Check for off-by-one errors, wrong aggregations, or incorrect filters
+4. Ensure data type conversions are correct (string to int, etc.)
+5. Look for relationship mismatches between datasets
+6. Print MORE intermediate steps to debug the issue
+
+DO NOT repeat the same mistake. Adjust your approach based on the error above.
+"""
+
+    user_prompt = f"""QUIZ INFORMATION:
+URL: {quiz_url}
+Origin: {origin}
+
+INSTRUCTIONS FROM PAGE:
+{quiz_content[:12000]}
+{retry_section}
+
+YOUR IMPLEMENTATION CHECKLIST:
+□ Parse instructions to understand what data to download
+□ Download file(s) using httpx
+□ Load data into appropriate structure (pandas DataFrame, JSON, etc.)
+□ INSPECT data structure (columns, types, shape, sample rows)
+□ IDENTIFY relationships between datasets
+□ Perform calculations matching the question requirements
+□ Format answer according to expected type
+□ Submit to {origin}/submit
+□ Print response JSON (may contain next quiz URL)
+
+COMMON PITFALLS TO AVOID:
+❌ Assuming column names without checking
+❌ Not converting data types (e.g., string "123" vs int 123)
+❌ Misunderstanding foreign key relationships
+❌ Using wrong aggregation (sum vs count vs mean)
+❌ Off-by-one errors in filtering/slicing
+❌ Not handling whitespace in string columns
+
+SUBMISSION TEMPLATE:
+```python
+import asyncio
+import httpx
+import pandas as pd
+import json
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Step 1: Download data
+        print("Downloading data...")
+        
+        # Step 2: Load and inspect
+        print("Loading data...")
+        print(f"Columns: {{df.columns.tolist()}}")
+        print(f"Types: {{df.dtypes}}")
+        print(df.head(3))
+        
+        # Step 3: Process and calculate
+        print("Calculating answer...")
+        
+        # Step 4: Submit
+        answer = <your_calculation>
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("{origin}/submit", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+Generate the complete, executable Python script now."""
+
+    # Call LLM with optimized prompts
     provider = LLM_PROVIDER.lower()
-    print(f"Using LLM provider: {provider}")
     
     if provider == "gemini":
-        print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
-        print(f"Generating code with AI Pipe (openai/gpt-4o-mini)...")
         return await generate_with_aipipe(system_prompt, user_prompt)
     else:
-        raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
+        raise ValueError(f"Invalid LLM_PROVIDER: {provider}")
 
 
-async def execute_solver_script(script_path: str) -> tuple[str, str]:
-    """
-    Execute the generated Python script and capture output.
-    """
-    env = os.environ.copy()
-    
-    process = await asyncio.create_subprocess_exec(
-        "python", script_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env
-    )
-    
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=150)
-        return stdout.decode(), stderr.decode()
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-        return "", "Script execution timed out after 150 seconds."
-
-
+# Additional optimization: Better result extraction
 def extract_submission_result(stdout: str) -> dict:
     """
-    Extract submission result from script output.
-    Returns dict with 'correct', 'reason', 'url' if found.
+    Enhanced result extraction with multiple fallback strategies.
     """
-    try:
-        # Look for JSON in output containing submission response
-        json_matches = re.findall(r'\{[^}]*"correct"[^}]*\}', stdout)
-        if json_matches:
-            # Try the last match (most likely the final submission response)
-            for match in reversed(json_matches):
-                try:
-                    result = json.loads(match)
+    # Strategy 1: Look for explicit JSON response
+    json_patterns = [
+        r'Response JSON:\s*(\{[^}]*"correct"[^}]*\})',
+        r'Submission response:\s*(\{[^}]*"correct"[^}]*\})',
+        r'(\{"correct":\s*(?:true|false)[^}]*\})',
+    ]
+    
+    for pattern in json_patterns:
+        matches = re.findall(pattern, stdout, re.IGNORECASE)
+        for match in reversed(matches):
+            try:
+                result = json.loads(match)
+                if "correct" in result:
                     return result
-                except:
-                    continue
-    except Exception as e:
-        print(f"Failed to extract submission result: {e}")
+            except:
+                continue
+    
+    # Strategy 2: Look for success indicators
+    if re.search(r'correct.*true', stdout, re.IGNORECASE):
+        # Try to extract URL
+        url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+        return {
+            "correct": True,
+            "url": url_match.group(0) if url_match else None
+        }
+    
+    # Strategy 3: Look for error messages
+    if re.search(r'correct.*false|incorrect|wrong|error', stdout, re.IGNORECASE):
+        reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
+        return {
+            "correct": False,
+            "reason": reason_match.group(1) if reason_match else "Unknown error"
+        }
     
     return {}
 
