@@ -493,8 +493,8 @@ Now generate the complete, executable Python script that solves this specific qu
         print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
-        print(f"Generating code with AI Pipe ({model})...")
-        return await generate_with_aipipe(system_prompt, user_prompt)
+        print(f"Generating code with AI Pipe (openai/gpt-4o)...")  # Fixed: removed undefined 'model' variable
+        return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
     else:
         raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
 
@@ -749,7 +749,7 @@ async def process_quiz(email: str, secret: str, url: str):
     max_attempts = 20
     overall_start_time = time.time()
     
-    try:
+    try {
         print(f"Processing quiz sequence for {email} starting at {url}")
         
         while current_url and attempt < max_attempts:
@@ -780,10 +780,11 @@ async def process_quiz(email: str, secret: str, url: str):
         total_duration = time.time() - overall_start_time
         print(f"\n🏁 All quizzes completed for {email} in {total_duration:.1f}s")
         
-    except Exception as e:
+    } except Exception as e {
         print(f"❌ Error processing quiz sequence: {str(e)}")
         import traceback
         traceback.print_exc()
+    }
 
 
 @app.post("/")
