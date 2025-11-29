@@ -190,9 +190,11 @@ async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, pr
 Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
 - If it says "answer is X", submit exactly X
 - If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
+- If it says "Post to URL", use that EXACT URL including path segments (e.g., /submit/1, not /submit)
 - If it says "calculate Y from data", only then calculate Y
 - DO NOT invent steps that aren't explicitly mentioned in the instructions
 - DO NOT assume there's data to download unless explicitly told to download it
+- ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
 
 CORE OBJECTIVE:
 Generate ONLY valid Python code (no markdown, no explanations) that:
@@ -207,6 +209,20 @@ CODE STRUCTURE REQUIREMENTS:
 - Use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY") for credentials
 - Include comprehensive error handling with try/except blocks
 - Print debug information at every major step
+- ALWAYS use BeautifulSoup for HTML parsing (from bs4 import BeautifulSoup)
+- NEVER use string manipulation methods like .find() or slicing for HTML parsing
+
+HTML PARSING RULES (CRITICAL):
+1. ALWAYS use BeautifulSoup to parse HTML content:
+   ```python
+   from bs4 import BeautifulSoup
+   soup = BeautifulSoup(html_content, 'html.parser')
+   element = soup.find('div', class_='hidden-key')
+   text = element.get_text(strip=True)
+   ```
+2. NEVER use string methods like .find(), .index(), or slicing on HTML
+3. Use .get_text(strip=True) to extract clean text from elements
+4. Use .find(), .find_all(), .select() for element selection
 
 DATA PROCESSING RULES (ONLY IF DATA EXISTS):
 1. ALWAYS inspect data structure first:
@@ -232,13 +248,15 @@ DATA PROCESSING RULES (ONLY IF DATA EXISTS):
    - Display final answer before submission
 
 SUBMISSION FORMAT:
-POST to {origin}/submit with JSON:
+POST to the EXACT URL specified in instructions (e.g., /submit/1, not /submit):
 {
     "email": os.getenv("STUDENT_EMAIL"),
     "secret": os.getenv("SECRET_KEY"),
     "url": "<quiz_url>",
     "answer": <calculated_value>
 }
+
+CRITICAL: Use the exact submission URL from the instructions, including all path segments!
 
 Answer types based on question:
 - Numeric: int or float (not string)
@@ -248,8 +266,9 @@ Answer types based on question:
 - Object: {"key": "value"}
 
 AVAILABLE LIBRARIES:
-httpx, pandas, json, os, asyncio, base64, re, numpy
+httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
 For PDF: PyPDF2 or pdfplumber (if needed)
+For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
 
 EXECUTION CONSTRAINTS:
 - Must complete within 120 seconds
@@ -285,17 +304,21 @@ INSTRUCTIONS FROM PAGE:
 
 YOUR IMPLEMENTATION CHECKLIST:
 □ Read instructions carefully and understand what is being asked
+□ Note the EXACT submission URL including all path segments (e.g., /submit/1)
 □ Identify if you need to download data (look for explicit URLs or instructions)
+□ If HTML parsing needed, use BeautifulSoup (NEVER string manipulation)
 □ If simple answer is given in instructions, submit that directly
 □ If data processing needed: download, inspect, calculate, then submit
 □ Format answer according to expected type
-□ Submit to {origin}/submit
+□ Submit to the EXACT URL from instructions (not a modified version)
 □ Print response JSON (may contain next quiz URL)
 
 COMMON PITFALLS TO AVOID:
 ❌ Inventing data sources that don't exist in instructions
 ❌ Assuming you need to download data when it's not mentioned
 ❌ Not reading the instructions carefully enough
+❌ Using wrong submission URL (check for /submit/1 vs /submit)
+❌ Using string manipulation (.find(), slicing) instead of BeautifulSoup for HTML
 ❌ Assuming column names without checking
 ❌ Not converting data types (e.g., string "123" vs int 123)
 ❌ Misunderstanding foreign key relationships
@@ -322,6 +345,82 @@ async def main():
         }}
         
         response = await client.post("{origin}/submit", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+HTML PARSING EXAMPLE (BeautifulSoup - REQUIRED for HTML):
+```python
+import asyncio
+import httpx
+from bs4 import BeautifulSoup
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Download HTML
+        response = await client.get("<quiz_url>")
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extract using BeautifulSoup (NOT string methods)
+        element = soup.find('div', class_='hidden-key')
+        text = element.get_text(strip=True)
+        
+        answer = text[::-1]  # reverse if needed
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        # Submit to EXACT URL from instructions (e.g., /submit/1)
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "{quiz_url}",
+            "answer": answer
+        }}
+        
+        response = await client.post("<exact_submit_url>", json=submission)
+        print("Response JSON:", response.json())
+
+asyncio.run(main())
+```
+
+HTML PARSING EXAMPLE (if instructions mention finding element in HTML):
+```python
+import asyncio
+import httpx
+from bs4 import BeautifulSoup
+import os
+
+async def main():
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        # Step 1: Download HTML page
+        print("Downloading HTML page...")
+        response = await client.get("<exact_quiz_url>")
+        html_content = response.text
+        
+        # Step 2: Parse with BeautifulSoup (NEVER use string methods)
+        print("Parsing HTML...")
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Find element (e.g., div with class="hidden-key")
+        element = soup.find('div', class_='hidden-key')
+        text = element.get_text(strip=True)
+        print(f"Extracted text: {{text}}")
+        
+        # Step 3: Process text (e.g., reverse it)
+        answer = text[::-1]
+        print(f"FINAL ANSWER: {{answer}}")
+        
+        # Step 4: Submit to EXACT URL from instructions
+        submission = {{
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": os.getenv("SECRET_KEY"),
+            "url": "<exact_quiz_url>",
+            "answer": answer
+        }}
+        
+        # Use EXACT submission URL including path segments
+        response = await client.post("<exact_submit_url_from_instructions>", json=submission)
         print("Response JSON:", response.json())
 
 asyncio.run(main())
