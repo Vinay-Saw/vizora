@@ -581,14 +581,22 @@ def extract_submission_result(stdout: str) -> dict:
     # Strategy 3: Look for error messages with URL extraction
     if re.search(r'correct.*false|incorrect|wrong', stdout, re.IGNORECASE):
         reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
+        
+        # Try to find URL in JSON format first
         url_match = re.search(r'"url":\s*"([^"]+)"', stdout)
-        if not url_match:
-            url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+        next_url = None
+        if url_match:
+            next_url = url_match.group(1)
+        else:
+            # Fallback: look for any quiz URL in output
+            url_match2 = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+            if url_match2:
+                next_url = url_match2.group(0)
         
         return {
             "correct": False,
             "reason": reason_match.group(1) if reason_match else "Unknown error",
-            "url": url_match.group(1) if url_match else (url_match.group(0) if url_match else None)
+            "url": next_url
         }
     
     return {}
