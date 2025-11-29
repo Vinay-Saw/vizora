@@ -749,7 +749,7 @@ async def process_quiz(email: str, secret: str, url: str):
     max_attempts = 20
     overall_start_time = time.time()
     
-    try {
+    try:  # Fixed: changed try { to try:
         print(f"Processing quiz sequence for {email} starting at {url}")
         
         while current_url and attempt < max_attempts:
@@ -780,12 +780,11 @@ async def process_quiz(email: str, secret: str, url: str):
         total_duration = time.time() - overall_start_time
         print(f"\n🏁 All quizzes completed for {email} in {total_duration:.1f}s")
         
-    } except Exception as e {
+    except Exception as e:  # Fixed: changed } except to except
         print(f"❌ Error processing quiz sequence: {str(e)}")
         import traceback
         traceback.print_exc()
-    }
-
+    # Removed extra }
 
 @app.post("/")
 async def receive_quiz(request: QuizRequest):
