@@ -225,24 +225,28 @@ HTML PARSING RULES (CRITICAL):
 4. Use .find(), .find_all(), .select() for element selection
 
 DATA PROCESSING RULES (ONLY IF DATA EXISTS):
-1. ALWAYS inspect data structure first:
-   - Print df.columns.tolist() for column names
-   - Print df.dtypes for data types  
-   - Print df.head(3) for sample data
-   - Print df.shape for dimensions
+1. ALWAYS inspect data structure BEFORE using it:
+   - For JSON: print(json.dumps(data, indent=2)) or print(data)
+   - For DataFrames: print df.columns.tolist(), df.dtypes, df.head(3), df.shape
+   - Check the actual key names before accessing them
+   - DO NOT assume key names - inspect first!
 
-2. UNDERSTAND relationships between datasets:
+2. After inspection, use the ACTUAL keys from the data:
+   - If data shows {"temp": 25}, use data["temp"], NOT data["temperature"]
+   - If columns are ["City", "Temp"], use df["Temp"], NOT df["temperature"]
+
+3. UNDERSTAND relationships between datasets:
    - Column names may differ (e.g., "items" vs "id", "product_id" vs "id")
    - Lists of IDs in one table usually reference another table's ID column
    - Use .isin(), .merge(), or .explode() for proper joins
 
-3. CLEAN data before calculations:
+4. CLEAN data before calculations:
    - Strip whitespace from strings: df['col'].str.strip()
    - Convert types explicitly: pd.to_numeric(), .astype(int), etc.
    - Handle missing values: .dropna(), .fillna()
    - Parse dates if needed: pd.to_datetime()
 
-4. VERIFY calculations:
+5. VERIFY calculations:
    - Print intermediate results
    - Show row counts after filtering
    - Display final answer before submission
@@ -284,12 +288,14 @@ EXECUTION CONSTRAINTS:
 
 REQUIRED CORRECTIONS:
 1. Re-read the instructions carefully - did you miss something?
-2. Re-examine your data inspection output (columns, dtypes, head)
-3. Verify your logic matches what the question actually asks
-4. Check for off-by-one errors, wrong aggregations, or incorrect filters
-5. Ensure data type conversions are correct (string to int, etc.)
-6. Look for relationship mismatches between datasets
-7. Print MORE intermediate steps to debug the issue
+2. INSPECT THE DATA STRUCTURE - print it to see actual keys/columns
+3. Re-examine your data inspection output (columns, dtypes, head)
+4. Verify your logic matches what the question actually asks
+5. Check for off-by-one errors, wrong aggregations, or incorrect filters
+6. Ensure data type conversions are correct (string to int, etc.)
+7. Look for relationship mismatches between datasets
+8. Use ACTUAL key names from data, not assumed names
+9. Print MORE intermediate steps to debug the issue
 
 DO NOT repeat the same mistake. Adjust your approach based on the error above.
 """
@@ -306,7 +312,10 @@ YOUR IMPLEMENTATION CHECKLIST:
 □ Read instructions carefully and understand what is being asked
 □ Note the EXACT submission URL including all path segments (e.g., /submit/1)
 □ Identify if you need to download data (look for explicit URLs or instructions)
+□ If API requires authentication, check for API keys or headers in instructions
 □ If HTML parsing needed, use BeautifulSoup (NEVER string manipulation)
+□ INSPECT data structure BEFORE accessing (print JSON or DataFrame structure)
+□ Use ACTUAL key/column names from inspection (don't assume names!)
 □ If simple answer is given in instructions, submit that directly
 □ If data processing needed: download, inspect, calculate, then submit
 □ Format answer according to expected type
@@ -319,6 +328,8 @@ COMMON PITFALLS TO AVOID:
 ❌ Not reading the instructions carefully enough
 ❌ Using wrong submission URL (check for /submit/1 vs /submit)
 ❌ Using string manipulation (.find(), slicing) instead of BeautifulSoup for HTML
+❌ ASSUMING key/column names without inspecting data first (CRITICAL!)
+❌ Not printing data structure before accessing it
 ❌ Assuming column names without checking
 ❌ Not converting data types (e.g., string "123" vs int 123)
 ❌ Misunderstanding foreign key relationships
@@ -438,19 +449,25 @@ async def main():
     async with httpx.AsyncClient(timeout=120.0) as client:
         # Step 1: Download data (use EXACT URL from instructions)
         print("Downloading data...")
-        response = await client.get("<exact_url_from_instructions>")
-        data = response.json()  # or .text or .content depending on format
+        headers = {{"X-API-Key": "key-if-needed"}}  # if auth required
+        response = await client.get("<exact_url_from_instructions>", headers=headers)
+        data = response.json()
         
-        # Step 2: Load and inspect
-        print("Loading data...")
+        # Step 2: INSPECT data structure FIRST (CRITICAL!)
+        print("Raw data structure:")
+        print(json.dumps(data, indent=2))  # See actual structure
+        
+        # For pandas:
         df = pd.DataFrame(data)
-        print(f"Columns: {{df.columns.tolist()}}")
+        print(f"Columns: {{df.columns.tolist()}}")  # Check actual column names
         print(f"Types: {{df.dtypes}}")
         print(df.head(3))
         
-        # Step 3: Process and calculate (based on instructions)
+        # Step 3: Use ACTUAL keys/columns from inspection
         print("Calculating answer...")
-        answer = <your_calculation_here>
+        # Example: if inspection showed "temp" not "temperature"
+        # max_row = df.loc[df['temp'].idxmax()]  # Use actual column name!
+        answer = <calculation_using_actual_keys>
         
         # Step 4: Submit
         print(f"FINAL ANSWER: {{answer}}")
@@ -462,7 +479,7 @@ async def main():
             "answer": answer
         }}
         
-        response = await client.post("{origin}/submit", json=submission)
+        response = await client.post("<exact_submit_url>", json=submission)
         print("Response JSON:", response.json())
 
 asyncio.run(main())
