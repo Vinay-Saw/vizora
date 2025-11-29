@@ -526,22 +526,48 @@ def extract_submission_result(stdout: str) -> dict:
     """
     Enhanced result extraction with multiple fallback strategies.
     """
-    # Strategy 1: Look for explicit JSON response
+    # Strategy 1: Look for explicit JSON response (most reliable)
     json_patterns = [
-        r'Response JSON:\s*(\{[^}]*"correct"[^}]*\})',
-        r'Submission response:\s*(\{[^}]*"correct"[^}]*\})',
-        r'(\{"correct":\s*(?:true|false)[^}]*\})',
+        r'Response JSON:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
+        r'Submission response:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
+        r'(\{[^}]*"correct":\s*(?:true|false|True|False)[^}]*\})',
     ]
     
     for pattern in json_patterns:
-        matches = re.findall(pattern, stdout, re.IGNORECASE)
+        matches = re.findall(pattern, stdout, re.IGNORECASE | re.DOTALL)
         for match in reversed(matches):
             try:
-                result = json.loads(match)
+                # Handle both single and double quotes
+                cleaned = match.replace("'", '"')
+                # Try to parse as JSON
+                result = json.loads(cleaned)
                 if "correct" in result:
+                    # Ensure we have the URL field if it exists in the output
+                    if "url" not in result:
+                        url_match = re.search(r'"url":\s*"([^"]+)"', match)
+                        if url_match:
+                            result["url"] = url_match.group(1)
                     return result
             except:
-                continue
+                # If JSON parsing fails, try manual extraction
+                try:
+                    result = {}
+                    correct_match = re.search(r'"correct":\s*(true|false|True|False)', match, re.IGNORECASE)
+                    if correct_match:
+                        result["correct"] = correct_match.group(1).lower() == "true"
+                    
+                    reason_match = re.search(r'"reason":\s*"([^"]+)"', match)
+                    if reason_match:
+                        result["reason"] = reason_match.group(1)
+                    
+                    url_match = re.search(r'"url":\s*"([^"]+)"', match)
+                    if url_match:
+                        result["url"] = url_match.group(1)
+                    
+                    if "correct" in result:
+                        return result
+                except:
+                    continue
     
     # Strategy 2: Look for success indicators
     if re.search(r'correct.*true', stdout, re.IGNORECASE):
@@ -552,12 +578,17 @@ def extract_submission_result(stdout: str) -> dict:
             "url": url_match.group(0) if url_match else None
         }
     
-    # Strategy 3: Look for error messages
-    if re.search(r'correct.*false|incorrect|wrong|error', stdout, re.IGNORECASE):
+    # Strategy 3: Look for error messages with URL extraction
+    if re.search(r'correct.*false|incorrect|wrong', stdout, re.IGNORECASE):
         reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
+        url_match = re.search(r'"url":\s*"([^"]+)"', stdout)
+        if not url_match:
+            url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+        
         return {
             "correct": False,
-            "reason": reason_match.group(1) if reason_match else "Unknown error"
+            "reason": reason_match.group(1) if reason_match else "Unknown error",
+            "url": url_match.group(1) if url_match else (url_match.group(0) if url_match else None)
         }
     
     return {}
@@ -639,6 +670,7 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             
             elif "correct" in result:  # Explicitly incorrect
                 reason = result.get("reason", "Unknown reason")
+                next_quiz_url = result.get("url")
                 print(f"\n❌ Answer incorrect: {reason}")
                 
                 # Check if we should retry
@@ -650,8 +682,12 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                     continue
                 else:
                     print(f"⚠️ Max retries reached. Moving to next quiz.")
-                    next_url = result.get("url")
-                    return next_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
+                    # Return the next URL from the response if available
+                    if next_quiz_url:
+                        print(f"📋 Next quiz URL from response: {next_quiz_url}")
+                        return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
+                    else:
+                        return None, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts"
             
             else:
                 # No clear result - assume success and look for next URL
