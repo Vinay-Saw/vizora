@@ -31,7 +31,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")  # Default to aipipe
 
 # Quiz timing constraints
 QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
-MAX_RETRIES_PER_QUIZ = 1  # Retry once if incorrect
+MAX_RETRIES_PER_QUIZ = 3  # Retry 3 times if incorrect (changed from 1)
 
 class QuizRequest(BaseModel):
     email: str
@@ -125,10 +125,26 @@ async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
         
         code = response.text
         
-        # Clean up code - remove markdown if present
+        # Clean up code - remove markdown and trailing explanations
         code = code.replace("```python", "").replace("```", "").strip()
         
-        return code
+        # Remove any text after the last complete Python statement
+        # Look for common ending patterns
+        lines = code.split('\n')
+        cleaned_lines = []
+        found_asyncio_run = False
+        
+        for line in lines:
+            cleaned_lines.append(line)
+            if 'asyncio.run(main())' in line or 'asyncio.run(' in line:
+                found_asyncio_run = True
+                break
+        
+        # If we found the end marker, use cleaned version
+        if found_asyncio_run:
+            code = '\n'.join(cleaned_lines)
+        
+        return code.strip()
         
     except Exception as e:
         print(f"Gemini API error: {str(e)}")
@@ -137,7 +153,7 @@ async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
 
 async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o") -> str:
     """
-    Generate code using AI Pipe API.
+    Generate code using AI Pipe API with improved code extraction.
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
@@ -168,10 +184,43 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
             result = response.json()
             code = result["choices"][0]["message"]["content"]
             
-            # Clean up code - remove markdown if present
+            # Clean up code - remove markdown and trailing explanations
             code = code.replace("```python", "").replace("```", "").strip()
             
-            return code
+            # Remove any text after the last complete Python statement
+            lines = code.split('\n')
+            cleaned_lines = []
+            found_asyncio_run = False
+            
+            for line in lines:
+                cleaned_lines.append(line)
+                # Look for script ending markers
+                if 'asyncio.run(main())' in line or 'asyncio.run(' in line:
+                    found_asyncio_run = True
+                    break
+            
+            # If we found the end marker, use cleaned version
+            if found_asyncio_run:
+                code = '\n'.join(cleaned_lines)
+            else:
+                # Fallback: remove lines that don't look like Python code
+                cleaned_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    # Skip lines that are clearly explanatory text
+                    if stripped and not any([
+                        stripped.startswith('Note:'),
+                        stripped.startswith('This script'),
+                        stripped.startswith('Make sure'),
+                        stripped.startswith('You need to'),
+                        stripped.startswith('Replace'),
+                        'typically requires' in stripped,
+                        'is not included' in stripped,
+                    ]):
+                        cleaned_lines.append(line)
+                code = '\n'.join(cleaned_lines)
+            
+            return code.strip()
             
         except httpx.RequestError as e:
             print(f"Request error: {str(e)}")
@@ -185,6 +234,15 @@ async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, pr
     """
     
     system_prompt = """You are an expert Python code generator that creates executable scripts to solve data analysis challenges.
+
+⚠️ CRITICAL OUTPUT REQUIREMENT:
+Generate ONLY valid, executable Python code. NO markdown backticks, NO explanations, NO notes.
+Your output must be PURE PYTHON CODE that can be directly executed.
+DO NOT add explanatory text before or after the code.
+DO NOT add comments explaining what needs to be done manually.
+The code must be fully automated and executable.
+
+If a task requires external tools (like audio transcription), use available Python libraries or APIs to solve it programmatically.
 
 ⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
 Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
@@ -316,6 +374,9 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
 For PDF: PyPDF2 or pdfplumber (if needed)
 For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
+For audio transcription: Use Whisper API or Google Speech-to-Text API
+  - Example: Use httpx to call OpenAI Whisper API or Google Cloud Speech API
+  - Include API authentication if provided in environment variables
 
 EXECUTION CONSTRAINTS:
 - Must complete within 120 seconds
