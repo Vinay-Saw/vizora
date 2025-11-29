@@ -190,11 +190,23 @@ async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, pr
 Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
 - If it says "answer is X", submit exactly X
 - If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
-- If it says "Post to URL", use that EXACT URL including path segments (e.g., /submit/1, not /submit)
+- If it says "POST to URL", use that EXACT URL - but check if it's the quiz URL or /submit
+- ⚠️ CRITICAL: Most quizzes submit to /submit endpoint, NOT to the quiz URL itself!
+- If instructions say "POST with url = <quiz_url>", that means include quiz_url in the payload, but POST to /submit
 - If it says "calculate Y from data", only then calculate Y
 - DO NOT invent steps that aren't explicitly mentioned in the instructions
 - DO NOT assume there's data to download unless explicitly told to download it
 - ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
+
+⚠️ SUBMISSION URL RULES (CRITICAL):
+1. DEFAULT: Submit to {origin}/submit unless explicitly told otherwise
+2. The "url" field in the payload should contain the QUIZ URL (for tracking)
+3. The POST endpoint is usually /submit, NOT the quiz URL itself
+4. Example:
+   - Quiz URL: https://example.com/quiz/1
+   - POST to: https://example.com/submit
+   - Payload: {"url": "https://example.com/quiz/1", "answer": "..."}
+5. Only POST directly to the quiz URL if instructions explicitly say so
 
 RESPONSE HANDLING (CRITICAL):
 ⚠️ Server responses may be HTML, JSON, or plain text. ALWAYS handle this properly:
@@ -282,22 +294,23 @@ DATA PROCESSING RULES (ONLY IF DATA EXISTS):
    - Display final answer before submission
 
 SUBMISSION FORMAT:
-POST to the EXACT URL specified in instructions (e.g., /submit/1, not /submit):
-{
-    "email": os.getenv("STUDENT_EMAIL"),
-    "secret": os.getenv("SECRET_KEY"),
-    "url": "<quiz_url>",
-    "answer": <calculated_value>
-}
+POST to /submit endpoint (NOT the quiz URL) unless explicitly stated otherwise:
+```python
+# The quiz URL goes in the payload, NOT as the POST endpoint
+response = await client.post(
+    "{origin}/submit",  # ← POST to /submit
+    json={{
+        "email": os.getenv("STUDENT_EMAIL"),
+        "secret": os.getenv("SECRET_KEY"),
+        "url": "{quiz_url}",  # ← Quiz URL goes HERE in payload
+        "answer": <calculated_value>
+    }}
+)
+```
 
-CRITICAL: Use the exact submission URL from the instructions, including all path segments!
-
-Answer types based on question:
-- Numeric: int or float (not string)
-- String: text value
-- Boolean: true/false
-- List: ["item1", "item2"]
-- Object: {"key": "value"}
+⚠️ COMMON MISTAKE: Do NOT post to the quiz URL itself - use /submit!
+Wrong: client.post("https://example.com/quiz/1", json=submission)
+Right: client.post("https://example.com/submit", json=submission)
 
 AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
@@ -384,19 +397,21 @@ import json
 async def main():
     async with httpx.AsyncClient(timeout=120.0) as client:
         answer = "anything you want"
-        print(f"FINAL ANSWER: {{{{answer}}}}")  # Fixed: double braces to escape
+        print(f"FINAL ANSWER: {{{{answer}}}}")
         
         submission = {{
             "email": os.getenv("STUDENT_EMAIL"),
             "secret": os.getenv("SECRET_KEY"),
-            "url": "{quiz_url}",
+            "url": "{quiz_url}",  # Quiz URL in payload
             "answer": answer
         }}
         
-        print(f"\\nSubmitting to: {origin}/submit")
+        # POST to /submit, NOT to the quiz URL
+        submit_url = "{origin}/submit"
+        print(f"\\nSubmitting to: {{{{submit_url}}}}")
         print(f"Payload: {{{{json.dumps(submission, indent=2)}}}}")
         
-        response = await client.post("{origin}/submit", json=submission)
+        response = await client.post(submit_url, json=submission)
         
         # Always print full response details
         print(f"\\n{{'='*80}}")
