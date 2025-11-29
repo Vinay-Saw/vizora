@@ -384,26 +384,26 @@ import json
 async def main():
     async with httpx.AsyncClient(timeout=120.0) as client:
         answer = "anything you want"
-        print(f"FINAL ANSWER: {answer}")
+        print(f"FINAL ANSWER: {{{{answer}}}}")  # Fixed: double braces to escape
         
-        submission = {
+        submission = {{
             "email": os.getenv("STUDENT_EMAIL"),
             "secret": os.getenv("SECRET_KEY"),
             "url": "{quiz_url}",
             "answer": answer
-        }
+        }}
         
-        print(f"\nSubmitting to: {origin}/submit")
-        print(f"Payload: {json.dumps(submission, indent=2)}")
+        print(f"\\nSubmitting to: {origin}/submit")
+        print(f"Payload: {{{{json.dumps(submission, indent=2)}}}}")
         
         response = await client.post("{origin}/submit", json=submission)
         
         # Always print full response details
-        print(f"\n{'='*80}")
+        print(f"\\n{{'='*80}}")
         print("SUBMISSION RESPONSE")
-        print(f"{'='*80}")
-        print(f"HTTP Status: {response.status_code}")
-        print(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
+        print(f"{{'='*80}}")
+        print(f"HTTP Status: {{{{response.status_code}}}}")
+        print(f"Content-Type: {{{{response.headers.get('content-type', 'unknown')}}}}")
         
         # Handle both JSON and non-JSON responses
         try:
@@ -411,10 +411,10 @@ async def main():
             print("Response JSON:")
             print(json.dumps(result, indent=2))
         except Exception as e:
-            print(f"JSON parsing failed: {e}")
+            print(f"JSON parsing failed: {{{{e}}}}")
             print("Response Text:")
             print(response.text[:1000])
-        print(f"{'='*80}\n")
+        print(f"{{'='*80}}\\n")
 
 asyncio.run(main())
 ```
@@ -483,7 +483,7 @@ async def main():
         answer = <calculation>
         
         # Step 4: Submit with proper response handling
-        print(f"FINAL ANSWER: {{answer}}")
+        print(f"FINAL ANSWER: {{{{answer}}}}")  # Fixed: double braces
         
         submission = {{
             "email": os.getenv("STUDENT_EMAIL"),
@@ -493,15 +493,15 @@ async def main():
         }}
         
         response = await client.post("<exact_submit_url>", json=submission)
-        print(f"HTTP Status: {{response.status_code}}")
-        print(f"Content-Type: {{response.headers.get('content-type', 'unknown')}}")
+        print(f"HTTP Status: {{{{response.status_code}}}}")  # Fixed: double braces
+        print(f"Content-Type: {{{{response.headers.get('content-type', 'unknown')}}}}")  # Fixed: double braces
         
         # Handle both JSON and non-JSON responses
         try:
             result = response.json()
             print("Response JSON:", result)
         except Exception as e:
-            print(f"JSON parsing failed: {{e}}")
+            print(f"JSON parsing failed: {{{{e}}}}")  # Fixed: double braces
             print("Response Text:", response.text[:500])
 
 asyncio.run(main())
@@ -562,10 +562,27 @@ def extract_submission_result(stdout: str) -> dict:
     """
     Enhanced result extraction with multiple fallback strategies.
     """
-    # Strategy 1: Look for explicit JSON response (most reliable)
+    # Strategy 1: Look for "Response JSON:" followed by JSON data (most reliable)
+    json_block_pattern = r'Response JSON:\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})'
+    matches = re.findall(json_block_pattern, stdout, re.DOTALL)
+    
+    for match in reversed(matches):
+        try:
+            # Clean up the JSON string
+            cleaned = match.strip()
+            result = json.loads(cleaned)
+            
+            if "correct" in result:
+                print(f"✓ Extracted result: correct={result.get('correct')}, url={result.get('url')}")
+                return result
+        except json.JSONDecodeError as e:
+            print(f"JSON parse attempt failed: {e}")
+            continue
+    
+    # Strategy 2: Look for explicit JSON response patterns
     json_patterns = [
-        r'Response JSON:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
-        r'Submission response:\s*(\{[^}]*(?:"correct"|\'correct\')[^}]*\})',
+        r'Response JSON:\s*(\{.+?\})',
+        r'Submission response:\s*(\{.+?\})',
         r'(\{[^}]*"correct":\s*(?:true|false|True|False)[^}]*\})',
     ]
     
@@ -575,14 +592,9 @@ def extract_submission_result(stdout: str) -> dict:
             try:
                 # Handle both single and double quotes
                 cleaned = match.replace("'", '"').replace('True', 'true').replace('False', 'false')
-                # Try to parse as JSON
                 result = json.loads(cleaned)
                 if "correct" in result:
-                    # Ensure we have the URL field if it exists in the output
-                    if "url" not in result:
-                        url_match = re.search(r'"url":\s*"([^"]+)"', match)
-                        if url_match:
-                            result["url"] = url_match.group(1)
+                    print(f"✓ Extracted result: correct={result.get('correct')}, url={result.get('url')}")
                     return result
             except:
                 # If JSON parsing fails, try manual extraction
@@ -592,7 +604,7 @@ def extract_submission_result(stdout: str) -> dict:
                     if correct_match:
                         result["correct"] = correct_match.group(1).lower() == "true"
                     
-                    reason_match = re.search(r'"reason":\s*"([^"]+)"', match)
+                    reason_match = re.search(r'"reason":\s*"([^"]*)"', match)
                     if reason_match:
                         result["reason"] = reason_match.group(1)
                     
@@ -601,48 +613,63 @@ def extract_submission_result(stdout: str) -> dict:
                         result["url"] = url_match.group(1)
                     
                     if "correct" in result:
+                        print(f"✓ Manually extracted result: correct={result.get('correct')}, url={result.get('url')}")
                         return result
                 except:
                     continue
     
-    # Strategy 2: Look for HTTP 200 and "Response Text" (likely success if no JSON)
-    if re.search(r'HTTP Status:\s*200', stdout) and re.search(r'Response Text:', stdout):
-        # Try to extract next URL from any part of output
-        url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+    # Strategy 3: Look for HTTP 200 and "Response Text" (likely success if no JSON)
+    if re.search(r'HTTP Status:\s*200', stdout):
+        # Look for any quiz-like URL in output
+        url_patterns = [
+            r'https?://[^\s<>"\']+/project\d+[^\s<>"\']*',
+            r'https?://[^\s<>"\']+/quiz/\d+',
+        ]
+        
+        next_url = None
+        for url_pattern in url_patterns:
+            url_match = re.search(url_pattern, stdout)
+            if url_match:
+                next_url = url_match.group(0)
+                break
+        
+        print(f"✓ HTTP 200 detected, extracted URL: {next_url}")
         return {
             "correct": True,
-            "url": url_match.group(0) if url_match else None
+            "url": next_url
         }
     
-    # Strategy 3: Look for success indicators
+    # Strategy 4: Look for success indicators
     if re.search(r'correct.*true|success|accepted', stdout, re.IGNORECASE):
-        url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+        url_match = re.search(r'https?://[^\s<>"\']+/(?:quiz|project)\d*[^\s<>"\']*', stdout)
+        next_url = url_match.group(0) if url_match else None
+        print(f"✓ Success indicator found, extracted URL: {next_url}")
         return {
             "correct": True,
-            "url": url_match.group(0) if url_match else None
+            "url": next_url
         }
     
-    # Strategy 4: Look for error messages with URL extraction
+    # Strategy 5: Look for error messages with URL extraction
     if re.search(r'correct.*false|incorrect|wrong', stdout, re.IGNORECASE):
         reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
-        
-        # Try to find URL in JSON format first
         url_match = re.search(r'"url":\s*"([^"]+)"', stdout)
+        
         next_url = None
         if url_match:
             next_url = url_match.group(1)
         else:
-            # Fallback: look for any quiz URL in output
-            url_match2 = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
+            url_match2 = re.search(r'https?://[^\s<>"\']+/(?:quiz|project)\d*[^\s<>"\']*', stdout)
             if url_match2:
                 next_url = url_match2.group(0)
         
+        print(f"✓ Error detected, extracted URL: {next_url}")
         return {
             "correct": False,
             "reason": reason_match.group(1) if reason_match else "Unknown error",
             "url": next_url
         }
     
+    print("⚠ No result extracted from output")
     return {}
 
 
