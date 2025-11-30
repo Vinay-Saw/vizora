@@ -376,16 +376,14 @@ For PDF: PyPDF2 or pdfplumber (if needed)
 For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
 
 ⚠️ AUDIO TRANSCRIPTION (CRITICAL):
-DO NOT use speech_recognition, pydub, or ffmpeg - they are NOT installed.
-Instead, use OpenAI Whisper API or similar web APIs:
+DO NOT use speech_recognition, pydub, pyaudio, or ffmpeg - they are NOT installed.
+Use web-based APIs for audio transcription:
 
-Example using OpenAI Whisper API:
+Option 1: OpenAI Whisper API (recommended if OPENAI_API_KEY available):
 ```python
-# Download audio file
 audio_response = await client.get("https://example.com/audio.opus")
 audio_data = audio_response.content
 
-# Use OpenAI Whisper API (if OPENAI_API_KEY available)
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if openai_api_key:
     files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
@@ -399,216 +397,12 @@ if openai_api_key:
         data=data
     )
     transcription = whisper_response.json()["text"].lower()
+    print(f"Transcription: {{transcription}}")
 ```
 
-If no API keys available, try to find transcription hints in the page content or use pattern matching.
-
-EXECUTION CONSTRAINTS:
-- Must complete within 120 seconds
-- Print "FINAL ANSWER:" before the answer value
-- ALWAYS handle both JSON and non-JSON responses with try/except
-- Print HTTP status code and content-type for debugging"""
-
-    # Build retry context if there was a previous error
-    retry_section = ""
-    if previous_error:
-        retry_section = f"""
-⚠️ PREVIOUS ATTEMPT FAILED - CRITICAL FEEDBACK:
-{previous_error}
-
-REQUIRED CORRECTIONS:
-1. Re-read the instructions carefully - did you miss something?
-2. ⚠️ LOOK AT THE DATA INSPECTION OUTPUT - what are the EXACT key names?
-3. COPY the exact key names from inspection - don't use similar names
-4. Example: if you see "coords", use "coords" NOT "coordinates"
-5. Re-examine your data inspection output (columns, dtypes, head)
-6. Verify your logic matches what the question actually asks
-7. Check for off-by-one errors, wrong aggregations, or incorrect filters
-8. Ensure data type conversions are correct (string to int, etc.)
-9. Look for relationship mismatches between datasets
-10. Print MORE intermediate steps to debug the issue
-11. If response parsing failed, add try/except around response.json()
-
-DO NOT repeat the same mistake. Adjust your approach based on the error above.
-"""
-
-    user_prompt = f"""QUIZ INFORMATION:
-URL: {quiz_url}
-Origin: {origin}
-
-INSTRUCTIONS FROM PAGE:
-{quiz_content[:12000]}
-{retry_section}
-
-YOUR IMPLEMENTATION CHECKLIST:
-□ Read instructions carefully and understand what is being asked
-□ Note the EXACT submission URL including all path segments (e.g., /submit/1)
-□ Identify if you need to download data (look for explicit URLs or instructions)
-□ If API requires authentication, check for API keys or headers in instructions
-□ If HTML parsing needed, use BeautifulSoup (NEVER string manipulation)
-□ INSPECT data structure BEFORE accessing (print JSON or DataFrame structure)
-□ Use ACTUAL key/column names from inspection (don't assume names!)
-□ If simple answer is given in instructions, submit that directly
-□ If data processing needed: download, inspect, calculate, then submit
-□ Format answer according to expected type
-□ Submit to the EXACT URL from instructions (not a modified version)
-□ Wrap response.json() in try/except to handle HTML/text responses
-□ Print response status and content-type
-
-COMMON PITFALLS TO AVOID:
-❌ Inventing data sources that don't exist in instructions
-❌ Assuming you need to download data when it's not mentioned
-❌ Not reading the instructions carefully enough
-❌ Using wrong submission URL (check for /submit/1 vs /submit)
-❌ Using string manipulation (.find(), slicing) instead of BeautifulSoup for HTML
-❌ ASSUMING key/column names without inspecting data first (CRITICAL!)
-❌ Not printing data structure before accessing it
-❌ ⚠️ CRITICAL: Using similar key names instead of EXACT key names from inspection
-❌ Example error: seeing "coords" in data but using "coordinates" in code
-❌ Not converting data types (e.g., string "123" vs int 123)
-❌ Misunderstanding foreign key relationships
-❌ Using wrong aggregation (sum vs count vs mean)
-❌ Off-by-one errors in filtering/slicing
-❌ Not handling whitespace in string columns
-❌ ⚠️ CRITICAL: Not handling non-JSON responses (HTML/text)
-❌ Calling response.json() without try/except
-
-SIMPLE EXAMPLE (if instructions say "answer anything"):
-```python
-import asyncio
-import httpx
-import os
-import json
-
-async def main():
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        answer = "anything you want"
-        print(f"FINAL ANSWER: {{{{answer}}}}")
-        
-        submission = {{
-            "email": os.getenv("STUDENT_EMAIL"),
-            "secret": os.getenv("SECRET_KEY"),
-            "url": "{quiz_url}",  # Quiz URL in payload
-            "answer": answer
-        }}
-        
-        # POST to /submit, NOT to the quiz URL
-        submit_url = "{origin}/submit"
-        print(f"\\nSubmitting to: {{{{submit_url}}}}")
-        print(f"Payload: {{{{json.dumps(submission, indent=2)}}}}")
-        
-        response = await client.post(submit_url, json=submission)
-        
-        # Always print full response details
-        print(f"\\n{{'='*80}}")
-        print("SUBMISSION RESPONSE")
-        print(f"{{'='*80}}")
-        print(f"HTTP Status: {{{{response.status_code}}}}")
-        print(f"Content-Type: {{{{response.headers.get('content-type', 'unknown')}}}}")
-        
-        # Handle both JSON and non-JSON responses
-        try:
-            result = response.json()
-            print("Response JSON:")
-            print(json.dumps(result, indent=2))
-        except Exception as e:
-            print(f"JSON parsing failed: {{{{e}}}}")
-            print("Response Text:")
-            print(response.text[:1000])
-        print(f"{{'='*80}}\\n")
-
-asyncio.run(main())
+Option 2: If no API key, look for hints/clues in the HTML or use manual listening
+(download audio and note: "Unable to auto-transcribe - requires manual input")
 ```
-
-HTML PARSING EXAMPLE (BeautifulSoup - REQUIRED for HTML):
-```python
-import asyncio
-import httpx
-from bs4 import BeautifulSoup
-import os
-
-async def main():
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        # Download HTML
-        response = await client.get("<quiz_url>")
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Extract using BeautifulSoup (NOT string methods)
-        element = soup.find('div', class_='hidden-key')
-        text = element.get_text(strip=True)
-        
-        answer = text[::-1]  # reverse if needed
-        print(f"FINAL ANSWER: {{answer}}")
-        
-        # Submit to EXACT URL from instructions (e.g., /submit/1)
-        submission = {{
-            "email": os.getenv("STUDENT_EMAIL"),
-            "secret": os.getenv("SECRET_KEY"),
-            "url": "{quiz_url}",
-            "answer": answer
-        }}
-        
-        response = await client.post("<exact_submit_url>", json=submission)
-        print(f"HTTP Status: {{response.status_code}}")
-        
-        # Handle both JSON and non-JSON responses
-        try:
-            result = response.json()
-            print("Response JSON:", result)
-        except:
-            print("Response Text:", response.text[:500])
-
-asyncio.run(main())
-```
-
-DATA PROCESSING EXAMPLE (with proper response handling):
-```python
-import asyncio
-import httpx
-import pandas as pd
-import json
-import os
-
-async def main():
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        # Step 1: Download data (use EXACT URL from instructions)
-        print("Downloading data...")
-        response = await client.get("<exact_url_from_instructions>")
-        data = response.json()
-        
-        # Step 2: INSPECT data structure FIRST (CRITICAL!)
-        print("Raw data structure:")
-        print(json.dumps(data, indent=2))
-        
-        # Step 3: Use EXACT keys from inspection
-        answer = <calculation>
-        
-        # Step 4: Submit with proper response handling
-        print(f"FINAL ANSWER: {{{{answer}}}}")  # Fixed: double braces
-        
-        submission = {{
-            "email": os.getenv("STUDENT_EMAIL"),
-            "secret": os.getenv("SECRET_KEY"),
-            "url": "{quiz_url}",
-            "answer": answer
-        }}
-        
-        response = await client.post("<exact_submit_url>", json=submission)
-        print(f"HTTP Status: {{{{response.status_code}}}}")  # Fixed: double braces
-        print(f"Content-Type: {{{{response.headers.get('content-type', 'unknown')}}}}")  # Fixed: double braces
-        
-        # Handle both JSON and non-JSON responses
-        try:
-            result = response.json()
-            print("Response JSON:", result)
-        except Exception as e:
-            print(f"JSON parsing failed: {{{{e}}}}")  # Fixed: double braces
-            print("Response Text:", response.text[:500])
-
-asyncio.run(main())
-```
-
-Now generate the complete, executable Python script that solves this specific quiz."""
 
     provider = LLM_PROVIDER.lower()
     print(f"Using LLM provider: {provider}")
