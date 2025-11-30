@@ -1,14 +1,12 @@
 import os
 import json
 import asyncio
-import subprocess
 import base64
 import re
 import httpx
-import random
 import time
-from typing import Optional
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from typing import Optional, Tuple
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from bs4 import BeautifulSoup
@@ -27,11 +25,12 @@ AIPIPE_URL = "https://aipipe.org/openrouter/v1/chat/completions"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # LLM Provider Selection: "gemini" or "aipipe"
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")  # Default to aipipe
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")
 
 # Quiz timing constraints
 QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
-MAX_RETRIES_PER_QUIZ = 3  # Retry 3 times if incorrect (changed from 1)
+MAX_RETRIES_PER_QUIZ = 3  # Retry 3 times if incorrect
+
 
 class QuizRequest(BaseModel):
     email: str
@@ -39,31 +38,22 @@ class QuizRequest(BaseModel):
     url: str
 
 
-class QuizResponse(BaseModel):
-    status: str
-    message: Optional[str] = None
-
-
-async def fetch_page_content(url: str) -> tuple[str, str]:
+async def fetch_page_content(url: str) -> Tuple[str, str]:
     """
     Fetch page content and extract the origin (base URL).
     Returns: (html_content, origin_url)
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            html_content = response.text
-            
-            # Extract origin (scheme + domain)
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            origin = f"{parsed.scheme}://{parsed.netloc}"
-            
-            return html_content, origin
-            
-        except Exception as e:
-            raise Exception(f"Failed to fetch page: {str(e)}")
+        response = await client.get(url)
+        response.raise_for_status()
+        html_content = response.text
+        
+        # Extract origin (scheme + domain)
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        
+        return html_content, origin
 
 
 def process_html_content(html_content: str, origin: str) -> str:
@@ -73,7 +63,6 @@ def process_html_content(html_content: str, origin: str) -> str:
     2. Replacing <span class="origin"> with actual origin
     3. Extracting readable instructions
     """
-    # Parse with BeautifulSoup
     soup = BeautifulSoup(html_content, 'html.parser')
     
     # Replace all .origin spans with actual origin
@@ -109,122 +98,93 @@ def process_html_content(html_content: str, origin: str) -> str:
 
 
 async def generate_with_gemini(system_prompt: str, user_prompt: str) -> str:
-    """
-    Generate code using Gemini API.
-    """
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        
-        # Combine system and user prompts for Gemini
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
-        
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=full_prompt
+    """Generate code using Gemini API."""
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    # Combine system and user prompts for Gemini
+    full_prompt = f"{system_prompt}\n\n{user_prompt}"
+    
+    response = client.models.generate_content(
+        model="gemini-2.0-flash-exp",
+        contents=full_prompt
+    )
+    
+    code = response.text
+    
+    # Clean up code - remove markdown and trailing explanations
+    code = code.replace("```python", "").replace("```", "").strip()
+    
+    # Remove any text after the last complete Python statement
+    lines = code.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        cleaned_lines.append(line)
+        if 'asyncio.run(main())' in line or 'asyncio.run(' in line:
+            break
+    
+    return '\n'.join(cleaned_lines).strip()
+
+
+async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o") -> str:
+    """Generate code using AI Pipe API with improved code extraction."""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            AIPIPE_URL,
+            headers={
+                "Authorization": f"Bearer {AIPIPE_TOKEN}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.2
+            }
         )
         
-        code = response.text
+        if response.status_code != 200:
+            print(f"AI Pipe API error response: {response.text}")
+            # Fallback to GPT-4o-mini
+            if model != "openai/gpt-4o-mini":
+                print("Retrying with GPT-4o-mini...")
+                return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o-mini")
+            raise Exception(f"AI Pipe API failed with status {response.status_code}")
+        
+        result = response.json()
+        code = result["choices"][0]["message"]["content"]
         
         # Clean up code - remove markdown and trailing explanations
         code = code.replace("```python", "").replace("```", "").strip()
         
         # Remove any text after the last complete Python statement
-        # Look for common ending patterns
         lines = code.split('\n')
         cleaned_lines = []
-        found_asyncio_run = False
         
         for line in lines:
             cleaned_lines.append(line)
             if 'asyncio.run(main())' in line or 'asyncio.run(' in line:
-                found_asyncio_run = True
                 break
         
         # If we found the end marker, use cleaned version
-        if found_asyncio_run:
+        if any('asyncio.run(' in line for line in cleaned_lines):
+            code = '\n'.join(cleaned_lines)
+        else:
+            # Fallback: remove lines that don't look like Python code
+            cleaned_lines = []
+            skip_phrases = [
+                'Note:', 'This script', 'Make sure', 'You need to', 'Replace',
+                'typically requires', 'is not included'
+            ]
+            for line in lines:
+                stripped = line.strip()
+                if stripped and not any(phrase in stripped for phrase in skip_phrases):
+                    cleaned_lines.append(line)
             code = '\n'.join(cleaned_lines)
         
         return code.strip()
-        
-    except Exception as e:
-        print(f"Gemini API error: {str(e)}")
-        raise Exception(f"Failed to generate code with Gemini: {str(e)}")
-
-
-async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str = "openai/gpt-4o") -> str:
-    """
-    Generate code using AI Pipe API with improved code extraction.
-    """
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        try:
-            response = await client.post(
-                AIPIPE_URL,
-                headers={
-                    "Authorization": f"Bearer {AIPIPE_TOKEN}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "temperature": 0.2
-                }
-            )
-            
-            if response.status_code != 200:
-                print(f"AI Pipe API error response: {response.text}")
-                # Fallback to GPT-4o-mini
-                if model != "openai/gpt-4o-mini":
-                    print("Retrying with GPT-4o-mini...")
-                    return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o-mini")
-                raise Exception(f"AI Pipe API failed with status {response.status_code}")
-            
-            result = response.json()
-            code = result["choices"][0]["message"]["content"]
-            
-            # Clean up code - remove markdown and trailing explanations
-            code = code.replace("```python", "").replace("```", "").strip()
-            
-            # Remove any text after the last complete Python statement
-            lines = code.split('\n')
-            cleaned_lines = []
-            found_asyncio_run = False
-            
-            for line in lines:
-                cleaned_lines.append(line)
-                # Look for script ending markers
-                if 'asyncio.run(main())' in line or 'asyncio.run(' in line:
-                    found_asyncio_run = True
-                    break
-            
-            # If we found the end marker, use cleaned version
-            if found_asyncio_run:
-                code = '\n'.join(cleaned_lines)
-            else:
-                # Fallback: remove lines that don't look like Python code
-                cleaned_lines = []
-                for line in lines:
-                    stripped = line.strip()
-                    # Skip lines that are clearly explanatory text
-                    if stripped and not any([
-                        stripped.startswith('Note:'),
-                        stripped.startswith('This script'),
-                        stripped.startswith('Make sure'),
-                        stripped.startswith('You need to'),
-                        stripped.startswith('Replace'),
-                        'typically requires' in stripped,
-                        'is not included' in stripped,
-                    ]):
-                        cleaned_lines.append(line)
-                code = '\n'.join(cleaned_lines)
-            
-            return code.strip()
-            
-        except httpx.RequestError as e:
-            print(f"Request error: {str(e)}")
-            raise Exception(f"Failed to connect to AI Pipe API: {str(e)}")
 
 
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
@@ -242,40 +202,31 @@ DO NOT add explanatory text before or after the code.
 DO NOT add comments explaining what needs to be done manually.
 The code must be fully automated and executable.
 
-If a task requires external tools (like audio transcription), use available Python libraries or APIs to solve it programmatically.
-
-⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
+⚠️ CRITICAL INSTRUCTION READING RULE:
 Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
 - If it says "answer is X", submit exactly X
-- If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
+- If it says "download from URL", download from that EXACT URL
 - If it says "POST to URL", use that EXACT URL - but check if it's the quiz URL or /submit
-- ⚠️ CRITICAL: Most quizzes submit to /submit endpoint, NOT to the quiz URL itself!
-- If instructions say "POST with url = <quiz_url>", that means include quiz_url in the payload, but POST to /submit
 - If it says "calculate Y from data", only then calculate Y
-- DO NOT invent steps that aren't explicitly mentioned in the instructions
-- DO NOT assume there's data to download unless explicitly told to download it
+- DO NOT invent steps that aren't explicitly mentioned
+- DO NOT assume there's data to download unless explicitly told
 - ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
 
 ⚠️ SUBMISSION URL RULES (CRITICAL):
 1. DEFAULT: Submit to {origin}/submit unless explicitly told otherwise
 2. The "url" field in the payload should contain the QUIZ URL (for tracking)
 3. The POST endpoint is usually /submit, NOT the quiz URL itself
-4. Example:
-   - Quiz URL: https://example.com/quiz/1
-   - POST to: https://example.com/submit
-   - Payload: {"url": "https://example.com/quiz/1", "answer": "..."}
-5. Only POST directly to the quiz URL if instructions explicitly say so
+4. Only POST directly to the quiz URL if instructions explicitly say so
 
 RESPONSE HANDLING (CRITICAL):
 ⚠️ Server responses may be HTML, JSON, or plain text. ALWAYS handle this properly:
 ```python
 response = await client.post(url, json=submission)
-print(f"\n{'='*80}")
+print(f"\\n{'='*80}")
 print("SUBMISSION RESPONSE")
 print(f"{'='*80}")
 print(f"HTTP Status: {response.status_code}")
 print(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
-print(f"Response Headers: {dict(response.headers)}")
 
 # Try JSON first, fallback to text
 try:
@@ -286,13 +237,11 @@ except Exception as e:
     print(f"JSON parsing failed: {e}")
     print("Response Text:")
     print(response.text[:1000])
-print(f"{'='*80}\n")
+print(f"{'='*80}\\n")
 ```
 
-NEVER assume response.json() will work - always use try/except and print both attempts!
-
 CORE OBJECTIVE:
-Generate ONLY valid Python code (no markdown, no explanations) that:
+Generate ONLY valid Python code that:
 1. Reads and follows the exact instructions provided
 2. Downloads and processes data ONLY if instructed to do so
 3. Performs accurate calculations based on actual data (if applicable)
@@ -310,99 +259,63 @@ CODE STRUCTURE REQUIREMENTS:
 - ALWAYS wrap response.json() in try/except
 
 HTML PARSING RULES (CRITICAL):
-1. ALWAYS use BeautifulSoup to parse HTML content:
-   ```python
-   from bs4 import BeautifulSoup
-   soup = BeautifulSoup(html_content, 'html.parser')
-   element = soup.find('div', class_='hidden-key')
-   text = element.get_text(strip=True)
-   ```
+1. ALWAYS use BeautifulSoup to parse HTML content
 2. NEVER use string methods like .find(), .index(), or slicing on HTML
 3. Use .get_text(strip=True) to extract clean text from elements
 4. Use .find(), .find_all(), .select() for element selection
 
 DATA PROCESSING RULES (ONLY IF DATA EXISTS):
-1. ALWAYS inspect data structure BEFORE using it:
-   - For JSON: print(json.dumps(data, indent=2)) or print(data)
-   - For DataFrames: print df.columns.tolist(), df.dtypes, df.head(3), df.shape
-   - Check the actual key names before accessing them
-   - DO NOT assume key names - inspect first!
-
-2. ⚠️ CRITICAL: After inspection, use ONLY the EXACT keys you see in the output:
-   - If you see {"coords": [0, 0]}, use data["coords"] - NOT data["coordinates"]
-   - If you see {"temp": 25}, use data["temp"] - NOT data["temperature"]
-   - If you see ["City", "Temp"], use df["Temp"] - NOT df["temperature"]
-   - LOOK AT THE INSPECTION OUTPUT and copy the exact key names
-   - DO NOT use similar or assumed key names - use EXACT matches only
-
-3. UNDERSTAND relationships between datasets:
-   - Column names may differ (e.g., "items" vs "id", "product_id" vs "id")
-   - Lists of IDs in one table usually reference another table's ID column
-   - Use .isin(), .merge(), or .explode() for proper joins
-
-4. CLEAN data before calculations:
-   - Strip whitespace from strings: df['col'].str.strip()
-   - Convert types explicitly: pd.to_numeric(), .astype(int), etc.
-   - Handle missing values: .dropna(), .fillna()
-   - Parse dates if needed: pd.to_datetime()
-
-5. VERIFY calculations:
-   - Print intermediate results
-   - Show row counts after filtering
-   - Display final answer before submission
+1. ALWAYS inspect data structure BEFORE using it
+2. Use ONLY the EXACT keys you see in the inspection output
+3. UNDERSTAND relationships between datasets
+4. CLEAN data before calculations
+5. VERIFY calculations with print statements
 
 SUBMISSION FORMAT:
-POST to /submit endpoint (NOT the quiz URL) unless explicitly stated otherwise:
 ```python
-# The quiz URL goes in the payload, NOT as the POST endpoint
 response = await client.post(
-    "{origin}/submit",  # ← POST to /submit
+    "{origin}/submit",
     json={{
         "email": os.getenv("STUDENT_EMAIL"),
         "secret": os.getenv("SECRET_KEY"),
-        "url": "{quiz_url}",  # ← Quiz URL goes HERE in payload
+        "url": "{quiz_url}",
         "answer": <calculated_value>
     }}
 )
 ```
 
-⚠️ COMMON MISTAKE: Do NOT post to the quiz URL itself - use /submit!
-Wrong: client.post("https://example.com/quiz/1", json=submission)
-Right: client.post("https://example.com/submit", json=submission)
-
 AVAILABLE LIBRARIES:
-httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4)
-For PDF: PyPDF2 or pdfplumber (if needed)
-For HTML parsing: BeautifulSoup4 (REQUIRED for all HTML parsing)
+httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
-⚠️ AUDIO TRANSCRIPTION (CRITICAL):
-DO NOT use speech_recognition, pydub, pyaudio, or ffmpeg - they are NOT installed.
-Use web-based APIs for audio transcription:
-
-Option 1: OpenAI Whisper API (recommended if OPENAI_API_KEY available):
+⚠️ AUDIO TRANSCRIPTION:
+Use OpenAI Whisper API with AIPIPE_TOKEN (via aipipe) or Gemini API with GEMINI_API_KEY for transcription.
+Example with AIPIPE:
 ```python
-audio_response = await client.get("https://example.com/audio.opus")
+audio_response = await client.get("audio_url")
 audio_data = audio_response.content
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if openai_api_key:
-    files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
-    data = {{"model": "whisper-1"}}
-    headers = {{"Authorization": f"Bearer {{openai_api_key}}"}}
-    
-    whisper_response = await client.post(
-        "https://api.openai.com/v1/audio/transcriptions",
-        headers=headers,
-        files=files,
-        data=data
-    )
-    transcription = whisper_response.json()["text"].lower()
-    print(f"Transcription: {{transcription}}")
-```
+aipipe_token = os.getenv("AIPIPE_TOKEN")
+files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
+data = {{"model": "whisper-1"}}
+headers = {{"Authorization": f"Bearer {{aipipe_token}}"}}
 
-Option 2: If no API key, look for hints/clues in the HTML or use manual listening
-(download audio and note: "Unable to auto-transcribe - requires manual input")
-```
+whisper_response = await client.post(
+    "https://aipipe.org/openrouter/v1/audio/transcriptions",
+    headers=headers,
+    files=files,
+    data=data
+)
+transcription = whisper_response.json()["text"].lower()
+```"""
+
+    user_prompt = f"""Quiz URL: {quiz_url}
+Origin: {origin}
+
+Quiz Content:
+{quiz_content}"""
+
+    if previous_error:
+        user_prompt += f"\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n{previous_error}\n\nPlease fix the issues and generate a corrected solution."
 
     provider = LLM_PROVIDER.lower()
     print(f"Using LLM provider: {provider}")
@@ -411,16 +324,14 @@ Option 2: If no API key, look for hints/clues in the HTML or use manual listenin
         print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
-        print(f"Generating code with AI Pipe (openai/gpt-4o)...")  # Fixed: removed undefined 'model' variable
+        print("Generating code with AI Pipe (openai/gpt-4o)...")
         return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
     else:
         raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
 
 
-async def execute_solver_script(script_path: str) -> tuple[str, str]:
-    """
-    Execute the generated Python script and capture output.
-    """
+async def execute_solver_script(script_path: str) -> Tuple[str, str]:
+    """Execute the generated Python script and capture output."""
     env = os.environ.copy()
     
     process = await asyncio.create_subprocess_exec(
@@ -435,7 +346,7 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
         stdout_text = stdout.decode()
         stderr_text = stderr.decode()
         
-        # Enhanced logging for submission responses
+        # Enhanced logging
         print("\n" + "="*80)
         print("SCRIPT EXECUTION COMPLETE")
         print("="*80)
@@ -454,24 +365,19 @@ async def execute_solver_script(script_path: str) -> tuple[str, str]:
 
 
 def extract_submission_result(stdout: str) -> dict:
-    """
-    Enhanced result extraction with multiple fallback strategies.
-    """
-    # Strategy 1: Look for "Response JSON:" followed by JSON data (most reliable)
+    """Enhanced result extraction with multiple fallback strategies."""
+    # Strategy 1: Look for "Response JSON:" followed by JSON data
     json_block_pattern = r'Response JSON:\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})'
     matches = re.findall(json_block_pattern, stdout, re.DOTALL)
     
     for match in reversed(matches):
         try:
-            # Clean up the JSON string
             cleaned = match.strip()
             result = json.loads(cleaned)
-            
             if "correct" in result:
                 print(f"✓ Extracted result: correct={result.get('correct')}, url={result.get('url')}")
                 return result
-        except json.JSONDecodeError as e:
-            print(f"JSON parse attempt failed: {e}")
+        except json.JSONDecodeError:
             continue
     
     # Strategy 2: Look for explicit JSON response patterns
@@ -485,83 +391,50 @@ def extract_submission_result(stdout: str) -> dict:
         matches = re.findall(pattern, stdout, re.IGNORECASE | re.DOTALL)
         for match in reversed(matches):
             try:
-                # Handle both single and double quotes
                 cleaned = match.replace("'", '"').replace('True', 'true').replace('False', 'false')
                 result = json.loads(cleaned)
                 if "correct" in result:
-                    print(f"✓ Extracted result: correct={result.get('correct')}, url={result.get('url')}")
+                    print(f"✓ Extracted result: correct={result.get('correct')}")
                     return result
             except:
-                # If JSON parsing fails, try manual extraction
-                try:
-                    result = {}
-                    correct_match = re.search(r'"correct":\s*(true|false|True|False)', match, re.IGNORECASE)
-                    if correct_match:
-                        result["correct"] = correct_match.group(1).lower() == "true"
-                    
-                    reason_match = re.search(r'"reason":\s*"([^"]*)"', match)
-                    if reason_match:
-                        result["reason"] = reason_match.group(1)
-                    
+                # Manual extraction
+                result = {}
+                correct_match = re.search(r'"correct":\s*(true|false|True|False)', match, re.IGNORECASE)
+                if correct_match:
+                    result["correct"] = correct_match.group(1).lower() == "true"
                     url_match = re.search(r'"url":\s*"([^"]+)"', match)
                     if url_match:
                         result["url"] = url_match.group(1)
-                    
                     if "correct" in result:
-                        print(f"✓ Manually extracted result: correct={result.get('correct')}, url={result.get('url')}")
                         return result
-                except:
-                    continue
     
-    # Strategy 3: Look for HTTP 200 and "Response Text" (likely success if no JSON)
+    # Strategy 3: Look for HTTP 200
     if re.search(r'HTTP Status:\s*200', stdout):
-        # Look for any quiz-like URL in output
         url_patterns = [
             r'https?://[^\s<>"\']+/project\d+[^\s<>"\']*',
             r'https?://[^\s<>"\']+/quiz/\d+',
         ]
-        
         next_url = None
         for url_pattern in url_patterns:
             url_match = re.search(url_pattern, stdout)
             if url_match:
                 next_url = url_match.group(0)
                 break
-        
-        print(f"✓ HTTP 200 detected, extracted URL: {next_url}")
-        return {
-            "correct": True,
-            "url": next_url
-        }
+        return {"correct": True, "url": next_url}
     
-    # Strategy 4: Look for success indicators
+    # Strategy 4: Success indicators
     if re.search(r'correct.*true|success|accepted', stdout, re.IGNORECASE):
         url_match = re.search(r'https?://[^\s<>"\']+/(?:quiz|project)\d*[^\s<>"\']*', stdout)
-        next_url = url_match.group(0) if url_match else None
-        print(f"✓ Success indicator found, extracted URL: {next_url}")
-        return {
-            "correct": True,
-            "url": next_url
-        }
+        return {"correct": True, "url": url_match.group(0) if url_match else None}
     
-    # Strategy 5: Look for error messages with URL extraction
+    # Strategy 5: Error messages
     if re.search(r'correct.*false|incorrect|wrong', stdout, re.IGNORECASE):
         reason_match = re.search(r'(?:reason|message)[":\s]+([^"}\n]+)', stdout, re.IGNORECASE)
         url_match = re.search(r'"url":\s*"([^"]+)"', stdout)
-        
-        next_url = None
-        if url_match:
-            next_url = url_match.group(1)
-        else:
-            url_match2 = re.search(r'https?://[^\s<>"\']+/(?:quiz|project)\d*[^\s<>"\']*', stdout)
-            if url_match2:
-                next_url = url_match2.group(0)
-        
-        print(f"✓ Error detected, extracted URL: {next_url}")
         return {
             "correct": False,
             "reason": reason_match.group(1) if reason_match else "Unknown error",
-            "url": next_url
+            "url": url_match.group(1) if url_match else None
         }
     
     print("⚠ No result extracted from output")
@@ -569,9 +442,9 @@ def extract_submission_result(stdout: str) -> dict:
 
 
 async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: float, 
-                            previous_error: Optional[str] = None) -> tuple[Optional[str], bool, Optional[str]]:
+                            previous_error: Optional[str] = None) -> Tuple[Optional[str], bool, Optional[str]]:
     """
-    Solve a single quiz with optional retry logic.
+    Solve a single quiz with retry logic.
     Returns: (next_url, success, error_message)
     """
     retry_count = 0
@@ -581,8 +454,8 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
         elapsed_time = time.time() - quiz_start_time
         remaining_time = QUIZ_TIME_LIMIT - elapsed_time
         
-        if remaining_time < 30:  # Need at least 30 seconds to attempt
-            print(f"⏰ Insufficient time remaining ({remaining_time:.1f}s) - skipping retry")
+        if remaining_time < 30:
+            print(f"⏰ Insufficient time remaining ({remaining_time:.1f}s)")
             return None, False, "Time limit exceeded"
         
         retry_suffix = f" (Retry {retry_count}/{MAX_RETRIES_PER_QUIZ})" if retry_count > 0 else ""
@@ -592,21 +465,19 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
         print(f"{'='*80}\n")
         
         try:
-            # Step 1: Fetch the quiz page
+            # Fetch and process page
             print("Fetching page content...")
             html_content, origin = await fetch_page_content(current_url)
             
-            # Step 2: Process HTML
             print(f"Processing content... (Origin: {origin})")
             processed_content = process_html_content(html_content, origin)
+            print(f"Processed content preview:\n{processed_content[:1000]}")
             
-            print(f"Processed content preview (first 1000 chars):\n{processed_content[:1000]}")
-            
-            # Step 3: Generate solver code
+            # Generate solver code
             print("Generating solver code with LLM...")
             solver_code = await generate_solver_code(processed_content, current_url, origin, last_error)
             
-            # Step 4: Save script
+            # Save and execute script
             script_path = f"solver_{abs(hash(current_url))}_{attempt}_{retry_count}.py"
             with open(script_path, "w") as f:
                 f.write(solver_code)
@@ -617,16 +488,8 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             print(solver_code)
             print("=" * 80)
             
-            # Step 5: Execute script
             print("Executing solver script...")
             stdout, stderr = await execute_solver_script(script_path)
-            
-            print("Script output:")
-            print(stdout)
-            
-            if stderr:
-                print("Script errors:")
-                print(stderr)
             
             # Clean up
             try:
@@ -634,58 +497,42 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
             except:
                 pass
             
-            # Step 6: Parse submission result
+            # Parse result
             result = extract_submission_result(stdout)
             
             if result.get("correct"):
                 print(f"\n✅ Quiz solved correctly!")
-                next_url = result.get("url")
-                return next_url, True, None
+                return result.get("url"), True, None
             
-            elif "correct" in result:  # Explicitly incorrect
+            elif "correct" in result:
                 reason = result.get("reason", "Unknown reason")
                 next_quiz_url = result.get("url")
                 print(f"\n❌ Answer incorrect: {reason}")
                 
-                # Check if we should retry
                 if retry_count < MAX_RETRIES_PER_QUIZ:
                     retry_count += 1
-                    last_error = f"Previous answer was incorrect. Reason: {reason}\n\nPrevious script output:\n{stdout[-2000:]}\n\nPrevious script errors:\n{stderr[-1000:] if stderr else 'None'}"
+                    last_error = f"Previous answer was incorrect. Reason: {reason}\n\nPrevious output:\n{stdout[-2000:]}"
                     print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
-                    await asyncio.sleep(2)  # Brief pause before retry
+                    await asyncio.sleep(2)
                     continue
                 else:
-                    print(f"⚠️ Max retries reached. Moving to next quiz.")
-                    # Return the next URL from the response if available
-                    if next_quiz_url:
-                        print(f"📋 Next quiz URL from response: {next_quiz_url}")
-                        return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
-                    else:
-                        return None, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
+                    print(f"⚠️ Max retries reached.")
+                    return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
             
             else:
-                # No clear result - assume success and look for next URL
                 print(f"⚠️ Could not determine if answer was correct (assuming success)")
-                next_url = None
-                
-                # Try to find next URL in output
                 url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
-                if url_match:
-                    next_url = url_match.group(0)
-                    print(f"📋 Found next quiz URL: {next_url}")
-                
-                return next_url, True, None
+                return url_match.group(0) if url_match else None, True, None
         
         except Exception as e:
             print(f"❌ Error during quiz attempt: {str(e)}")
             import traceback
-            error_trace = traceback.format_exc()
             traceback.print_exc()
             
             if retry_count < MAX_RETRIES_PER_QUIZ:
                 retry_count += 1
-                last_error = f"Previous attempt failed with error: {str(e)}\n\nTraceback:\n{error_trace}"
-                print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
+                last_error = f"Previous attempt failed: {str(e)}\n{traceback.format_exc()}"
+                print(f"🔄 Retrying...")
                 await asyncio.sleep(2)
                 continue
             else:
@@ -695,12 +542,9 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
 
 
 async def process_quiz(email: str, secret: str, url: str):
-    """
-    Background task to process the quiz and handle chained quiz URLs.
-    """
-    # Verify secret again (redundant but safe for background tasks)
+    """Background task to process the quiz and handle chained quiz URLs."""
     if secret != SECRET_KEY:
-        print(f"❌ Invalid secret for {email}, skipping processing")
+        print(f"❌ Invalid secret for {email}")
         return
     
     current_url = url
@@ -708,14 +552,13 @@ async def process_quiz(email: str, secret: str, url: str):
     max_attempts = 20
     overall_start_time = time.time()
     
-    try:  # Fixed: changed try { to try:
+    try:
         print(f"Processing quiz sequence for {email} starting at {url}")
         
         while current_url and attempt < max_attempts:
             attempt += 1
             quiz_start_time = time.time()
             
-            # Solve the quiz (with retry logic)
             next_url, success, error = await solve_single_quiz(
                 current_url, attempt, quiz_start_time
             )
@@ -726,10 +569,9 @@ async def process_quiz(email: str, secret: str, url: str):
             if next_url and next_url != current_url:
                 current_url = next_url
                 print(f"\n➡️ Moving to next quiz: {current_url}")
-                await asyncio.sleep(1)  # Brief pause between quizzes
+                await asyncio.sleep(1)
                 continue
             
-            # No next URL - sequence complete
             print(f"\n✅ Quiz sequence completed after {attempt} quiz(zes)!")
             break
         
@@ -739,26 +581,20 @@ async def process_quiz(email: str, secret: str, url: str):
         total_duration = time.time() - overall_start_time
         print(f"\n🏁 All quizzes completed for {email} in {total_duration:.1f}s")
         
-    except Exception as e:  # Fixed: changed } except to except
+    except Exception as e:
         print(f"❌ Error processing quiz sequence: {str(e)}")
         import traceback
         traceback.print_exc()
-    # Removed extra }
+
 
 @app.post("/")
 async def receive_quiz(request: QuizRequest):
-    """
-    Main endpoint to receive quiz requests.
-    Must verify secret and return 200 immediately, then process in background.
-    """
-    # Validate secret
+    """Main endpoint to receive quiz requests."""
     if request.secret != SECRET_KEY:
         raise HTTPException(status_code=403, detail="Forbidden: Invalid secret")
     
-    # Process quiz in background without blocking response
     asyncio.create_task(process_quiz(request.email, request.secret, request.url))
     
-    # Return immediate 200 response as required
     return JSONResponse(
         status_code=200,
         content={

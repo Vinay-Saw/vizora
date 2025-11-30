@@ -8,6 +8,8 @@ pydantic
 google-genai>=1.0.0
 pandas
 numpy
-pyarrow
-gradio
+openpyxl
+PyPDF2
+pdfplumber
 html5lib
+gradio
