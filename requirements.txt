@@ -11,6 +11,32 @@ numpy
 pyarrow
 gradio
 html5lib
-pydub
-SpeechRecognition
-pyaudio
+# In the system_prompt, replace the audio transcription section:
+
+⚠️ AUDIO TRANSCRIPTION (CRITICAL):
+DO NOT use speech_recognition, pydub, pyaudio, or ffmpeg - they are NOT installed.
+Use web-based APIs for audio transcription:
+
+Option 1: OpenAI Whisper API (recommended if OPENAI_API_KEY available):
+```python
+audio_response = await client.get("https://example.com/audio.opus")
+audio_data = audio_response.content
+
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if openai_api_key:
+    files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
+    data = {{"model": "whisper-1"}}
+    headers = {{"Authorization": f"Bearer {{openai_api_key}}"}}
+    
+    whisper_response = await client.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers=headers,
+        files=files,
+        data=data
+    )
+    transcription = whisper_response.json()["text"].lower()
+    print(f"Transcription: {{transcription}}")
+```
+
+Option 2: If no API key, look for hints/clues in the HTML or use manual listening
+(download audio and note: "Unable to auto-transcribe - requires manual input")
