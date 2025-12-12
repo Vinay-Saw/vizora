@@ -192,238 +192,140 @@ async def generate_with_aipipe(system_prompt: str, user_prompt: str, model: str 
 async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, previous_error: Optional[str] = None) -> str:
     """
     Use LLM to generate Python code that solves the quiz.
-    Supports both Gemini and AI Pipe providers with optimized prompts.
     """
     
     system_prompt = """You are an expert Python code generator that creates executable scripts to solve data analysis challenges.
 
 ⚠️ CRITICAL OUTPUT REQUIREMENT:
 Generate ONLY valid, executable Python code. NO markdown backticks, NO explanations, NO notes.
-Your output must be PURE PYTHON CODE that can be directly executed.
-DO NOT add explanatory text before or after the code.
-DO NOT add comments explaining what needs to be done manually.
-The code must be fully automated and executable.
 
-If a task requires external tools (like audio transcription), use available Python libraries or APIs to solve it programmatically.
+⚠️ CRITICAL FILE PATH EXTRACTION:
+When instructions mention files (PDF, audio, CSV, PNG, etc.):
+1. **SEARCH IN QUIZ CONTENT**, not in quiz_url
+2. Look for patterns like: "Open /path/file.pdf", "Listen to /path/audio.opus", "Download /path/data.csv"
+3. Extract the file path using regex on the quiz_content variable
+4. Build full URL: origin + extracted_path
 
-⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
-Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
-- If it says "answer is X", submit exactly X
-- If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
-- If it says "listen to /path/audio.opus", extract that path from instructions, don't hardcode
-- If it says "POST to URL", use that EXACT URL - but check if it's the quiz URL or /submit
-- ⚠️ CRITICAL: Most quizzes submit to /submit endpoint, NOT to the quiz URL itself!
-- If instructions say "POST with url = <quiz_url>", that means include quiz_url in the payload, but POST to /submit
-- If it says "calculate Y from data", only then calculate Y
-- DO NOT invent steps that aren't explicitly mentioned in the instructions
-- DO NOT assume there's data to download unless explicitly told to download it
-- ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
-- ALWAYS extract file paths, URLs, and data sources from quiz instructions dynamically
-
-⚠️ SUBMISSION URL RULES (CRITICAL):
-1. DEFAULT: Submit to {origin}/submit unless explicitly told otherwise
-2. The "url" field in the payload should contain the QUIZ URL (for tracking)
-3. The POST endpoint is usually /submit, NOT the quiz URL itself
-4. Only POST directly to the quiz URL if instructions explicitly say so
-
-RESPONSE HANDLING (CRITICAL):
-⚠️ Server responses may be HTML, JSON, or plain text. ALWAYS handle this properly:
+WRONG EXAMPLE (searches in quiz_url):
 ```python
-response = await client.post(url, json=submission)
-print(f"\\n{'='*80}")
-print("SUBMISSION RESPONSE")
-print(f"{'='*80}")
-print(f"HTTP Status: {response.status_code}")
-print(f"Content-Type: {response.headers.get('content-type', 'unknown')}")
-
-# Try JSON first, fallback to text
-try:
-    result = response.json()
-    print("Response JSON:")
-    print(json.dumps(result, indent=2))
-except Exception as e:
-    print(f"JSON parsing failed: {e}")
-    print("Response Text:")
-    print(response.text[:1000])
-print(f"{'='*80}\\n")
+pdf_path_match = re.search(r"/project2/invoice\.pdf", quiz_url)  # ❌ WRONG!
 ```
 
-CORE OBJECTIVE:
-Generate ONLY valid Python code that:
-1. Reads and follows the exact instructions provided
-2. Downloads and processes data ONLY if instructed to do so
-3. Performs accurate calculations based on actual data (if applicable)
-4. Submits the answer to the correct endpoint
-5. Handles both JSON and non-JSON responses
-
-CODE STRUCTURE REQUIREMENTS:
-- Start with ALL imports at the top (include: httpx, asyncio, os, json, time if needed)
-- Use async/await with httpx.AsyncClient for all HTTP operations
-- Validate environment variables exist before using them
-- Include comprehensive error handling with try/except blocks
-- Print debug information at every major step
-- ALWAYS use BeautifulSoup for HTML parsing (from bs4 import BeautifulSoup)
-- NEVER use string manipulation methods like .find() or slicing for HTML parsing
-- ALWAYS wrap response.json() in try/except
-- Clean up temporary files in finally blocks
-
-HTML PARSING RULES (CRITICAL):
-1. ALWAYS use BeautifulSoup to parse HTML content
-2. NEVER use string methods like .find(), .index(), or slicing on HTML
-3. Use .get_text(strip=True) to extract clean text from elements
-4. Use .find(), .find_all(), .select() for element selection
-
-DATA PROCESSING RULES (ONLY IF DATA EXISTS):
-1. ALWAYS inspect data structure BEFORE using it
-2. Use ONLY the EXACT keys you see in the inspection output
-3. UNDERSTAND relationships between datasets
-4. CLEAN data before calculations
-5. VERIFY calculations with print statements
-
-SUBMISSION FORMAT:
+CORRECT EXAMPLE (searches in quiz_content):
 ```python
-response = await client.post(
-    "{origin}/submit",
-    json={{
-        "email": os.getenv("STUDENT_EMAIL"),
-        "secret": os.getenv("SECRET_KEY"),
-        "url": "{quiz_url}",
-        "answer": <calculated_value>
-    }}
-)
+# Quiz content is available as a multi-line string in the user prompt
+quiz_content = """..."""  # This contains the instructions
+
+# Extract PDF path from quiz content
+pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)  # ✅ CORRECT!
+if pdf_path_match:
+    pdf_path = pdf_path_match.group(0)
+    pdf_url = f"{{origin}}{{pdf_path}}"
 ```
 
-AVAILABLE LIBRARIES:
-httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
-
-⚠️ AUDIO TRANSCRIPTION:
-If quiz instructions mention audio files, you MUST transcribe them using Gemini API.
-
-CRITICAL - URL Construction:
-- Search quiz content for audio file references (.opus, .mp3, .wav, .ogg extensions)
-- Extract the audio file path dynamically from quiz content
-- If path is relative (starts with /), build full URL: origin + path
-- If path is absolute URL, use it directly
-
-Transcription Steps (FOLLOW EXACTLY - WRAP IN TRY/EXCEPT):
-1. Import required modules: import time, from google import genai
-2. Download audio file and save locally with proper extension
-3. Transcribe using Gemini API (WRAP ENTIRE BLOCK IN TRY/EXCEPT):
-
+GENERAL FILE EXTRACTION PATTERN:
 ```python
-audio_filename = None
-answer = None
-
-try:
-    # Download audio
-    async with httpx.AsyncClient() as client:
-        audio_response = await client.get(audio_url)
-        audio_filename = "audio_file" + os.path.splitext(audio_url)[1]
-        with open(audio_filename, "wb") as f:
-            f.write(audio_response.content)
-        print(f"Downloaded audio to {audio_filename}")
-    
-    # Initialize Gemini client
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_api_key:
-        answer = "gemini_key_missing"
-        print("GEMINI_API_KEY not available")
-    else:
-        gemini_client = genai.Client(api_key=gemini_api_key)
-        
-        # Upload audio file - use 'file' parameter with file object
-        print("Uploading audio to Gemini...")
-        with open(audio_filename, "rb") as f:
-            audio_file = gemini_client.files.upload(file=f)
-        print(f"Uploaded: {audio_file.name}, state: {audio_file.state.name}")
-        
-        # Wait for processing (max 30 seconds)
-        wait_time = 0
-        while audio_file.state.name == "PROCESSING" and wait_time < 30:
-            time.sleep(1)
-            wait_time += 1
-            audio_file = gemini_client.files.get(name=audio_file.name)
-            print(f"Processing... ({wait_time}s)")
-        
-        if audio_file.state.name == "FAILED":
-            answer = "audio_processing_failed"
-            print("Audio processing failed")
-        elif audio_file.state.name == "PROCESSING":
-            answer = "audio_timeout"
-            print("Audio processing timeout")
-        else:
-            # Generate transcription
-            print("Generating transcription...")
-            response = gemini_client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=[
-                    audio_file,
-                    "Transcribe this audio in lowercase. Return only the transcribed text."
-                ]
-            )
-            answer = response.text.strip().lower()
-            print(f"Transcription: {answer}")
-        
-        # Cleanup
-        try:
-            gemini_client.files.delete(name=audio_file.name)
-        except:
-            pass
-
-except Exception as e:
-    print(f"Audio transcription error: {e}")
-    import traceback
-    traceback.print_exc()
-    answer = f"error_{str(e)[:30].replace(' ', '_')}"
-
-finally:
-    # Always clean up audio file
-    if audio_filename and os.path.exists(audio_filename):
-        try:
-            os.remove(audio_filename)
-        except:
-            pass
-
-# If answer is still None, use a fallback
-if not answer:
-    answer = "transcription_failed"
-```
-
-CRITICAL: Even if audio transcription completely fails, the script MUST continue and submit SOMETHING as the answer.
-
-Remember: Extract audio URLs dynamically from quiz content, never hardcode.
-
-EXECUTION CONSTRAINTS:
-- Must complete within 120 seconds
-- Print "FINAL ANSWER:" before the answer value
-- ALWAYS handle both JSON and non-JSON responses with try/except
-- Print HTTP status code and content-type for debugging
-
-COMMON MISTAKES TO AVOID:
-1. Missing imports (especially 'time' module for sleep operations)
-2. Not validating environment variables before use
-3. Hardcoding URLs or paths instead of extracting from content
-4. Using wrong parameter names in API calls (e.g., 'path=' vs 'file=')
-5. Not cleaning up temporary files
-6. Assuming data structure without inspecting it first
-7. Not handling both success and failure cases in API responses
+# Store the quiz content as a variable (it's in the user prompt)
+quiz_content = """
+(the quiz instructions will be here)
 """
 
-    # Build retry section if there was a previous error
+# Search for file paths in quiz_content (not quiz_url!)
+file_patterns = [
+    r'/[\w/-]+\.pdf',   # PDF files
+    r'/[\w/-]+\.csv',   # CSV files  
+    r'/[\w/-]+\.opus',  # Audio files
+    r'/[\w/-]+\.json',  # JSON files
+    r'/[\w/-]+\.png',   # PNG image files
+]
+
+file_path = None
+for pattern in file_patterns:
+    match = re.search(pattern, quiz_content)
+    if match:
+        file_path = match.group(0)
+        break
+
+if not file_path:
+    print("File path not found in quiz content")
+    # Submit fallback answer
+    answer = "file_not_found"
+else:
+    # Build full URL
+    if file_path.startswith('/'):
+        file_url = f"{{origin}}{{file_path}}"
+    else:
+        file_url = file_path
+    
+    # Download and process file...
+```
+
+⚠️ PDF PROCESSING:
+If quiz mentions PDF files:
+1. Extract PDF path from quiz_content (not quiz_url!)
+2. Download PDF: origin + pdf_path
+3. Use pdfplumber to extract tables/text
+4. Process according to instructions
+5. Always wrap in try/except with fallback answer
+
+Example:
+```python
+import pdfplumber
+
+# quiz_content is provided in the script
+quiz_content = """..."""
+
+# Extract PDF path from quiz content
+pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)
+if not pdf_path_match:
+    answer = "pdf_path_not_found"
+else:
+    pdf_path = pdf_path_match.group(0)
+    pdf_url = f"{{origin}}{{pdf_path}}"
+    pdf_filename = "downloaded.pdf"
+    
+    try:
+        # Download PDF
+        async with httpx.AsyncClient() as client:
+            response = await client.get(pdf_url)
+            with open(pdf_filename, "wb") as f:
+                f.write(response.content)
+        
+        # Extract and process
+        with pdfplumber.open(pdf_filename) as pdf:
+            # Process PDF according to instructions
+            pass
+        
+        # Calculate answer based on instructions
+        answer = calculated_result
+        
+    except Exception as e:
+        print(f"PDF processing error: {{e}}")
+        answer = "pdf_processing_failed"
+    
+    finally:
+        if os.path.exists(pdf_filename):
+            os.remove(pdf_filename)
+```
+
+REMEMBER:
+- quiz_content contains the instructions (available in user prompt)
+- Extract file paths from quiz_content, NOT from quiz_url
+- Use regex to find paths dynamically
+- Never hardcode file paths
+"""
+
+    # Build retry section
     retry_section = ""
     if previous_error:
         retry_section = f"""
 ⚠️ PREVIOUS ATTEMPT FAILED WITH ERROR:
 {previous_error}
 
-Analyze this error and fix it in your new solution:
-1. If it's a KeyError/IndexError, print the data structure first to inspect it
-2. If it's a URL error, verify you're using the exact URL from instructions
-3. If it's a parsing error, check the actual HTML/JSON structure
-4. If it's an API error, add proper error handling and print response details
-5. If audio transcription failed, ensure you extracted the audio path from quiz content
-
-DO NOT repeat the same mistake. Fix the root cause.
+Fix the issue. Common mistakes:
+- Searching for file paths in quiz_url instead of quiz_content
+- Not extracting paths dynamically
+- Wrong regex patterns
 """
 
     user_prompt = f"""Generate a Python script that solves this quiz:
@@ -431,37 +333,21 @@ DO NOT repeat the same mistake. Fix the root cause.
 Quiz URL: {quiz_url}
 Origin: {origin}
 
-Quiz Content (READ CAREFULLY - Extract all URLs and paths from here):
+Quiz Content (⚠️ SEARCH FOR FILE PATHS HERE, NOT IN QUIZ_URL):
 ```
 {quiz_content}
 ```
 
-CRITICAL INSTRUCTIONS:
-1. The quiz content above contains ALL information you need
-2. Extract file paths, audio URLs, data URLs from the quiz content using regex
-3. DO NOT hardcode any URLs or file paths
-4. If audio transcription is needed, extract the audio path from quiz content
-5. Build full URLs by combining origin + extracted path if path is relative
-6. Use variables like 'origin' and extracted paths to construct URLs dynamically
+CRITICAL:
+1. The quiz_content above contains ALL file paths (PDF, audio, CSV, etc.)
+2. Use regex to extract file paths FROM quiz_content (copy it into your script as a variable)
+3. DO NOT search in quiz_url
+4. Build full URLs: origin + extracted_path
 
 {retry_section}
 
-Generate ONLY executable Python code with these imports:
-```python
-import asyncio
-import httpx
-import os
-import json
-import base64
-import re
-import time
-from bs4 import BeautifulSoup
-import pandas as pd
-import numpy as np
-from google import genai
-```
-
-NO explanations, NO markdown, NO notes - PURE PYTHON CODE ONLY.
+Generate ONLY executable Python code with proper imports.
+Include the quiz_content as a multi-line string variable in your script.
 """
 
     provider = LLM_PROVIDER.lower()
