@@ -31,7 +31,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")
 
 # Quiz timing constraints
 QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
-MAX_RETRIES_PER_QUIZ = 3  # Retry up to 3 times if incorrect
+MAX_RETRIES_PER_QUIZ = 2  # Retry up to 2 times if incorrect
 
 
 class QuizRequest(BaseModel):
@@ -465,7 +465,7 @@ async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fall
                         
                         # Check if quiz sequence has ended (null URL)
                         if next_url is None or next_url == "null":
-                            print("🏁 Quiz sequence ended (null URL received)")
+                            print("🏁 Quiz sequence ended (No URL received)")
                             return None
                         
                         if next_url and next_url != quiz_url:
