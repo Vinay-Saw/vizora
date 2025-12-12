@@ -1,6 +1,17 @@
 """
 Combined FastAPI + Gradio app for Vizora Quiz Solver
 FastAPI at root, Gradio UI at /ui/
+
+This app provides a Gradio UI for the Vizora quiz solver, which uses LLMs
+to automatically solve data-related quizzes involving sourcing, preparation,
+analysis, and visualization.
+
+Environment Variables:
+- SECRET_KEY: Authentication secret key
+- STUDENT_EMAIL: Default student email
+- GEMINI_API_KEY: Google Gemini API key (required for audio transcription)
+- AIPIPE_TOKEN: AI Pipe API token (if using aipipe provider)
+- LLM_PROVIDER: "gemini" or "aipipe" (default: aipipe)
 """
 import gradio as gr
 from main import app as fastapi_app
@@ -11,13 +22,25 @@ load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_here")
 STUDENT_EMAIL = os.getenv("STUDENT_EMAIL", "your_email@example.com")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")
 
 # Create Gradio interface
 with gr.Blocks(title="Vizora - Quiz Solver") as gradio_demo:
-    gr.Markdown("""
+    gr.Markdown(f"""
     # 🎯 Vizora - LLM-Powered Quiz Solver
     
     An autonomous agent that solves data-related quizzes involving sourcing, preparation, analysis, and visualization.
+    
+    **Current LLM Provider:** {LLM_PROVIDER.upper()}
+    
+    ## Features:
+    - 🤖 Automatic quiz solving with retry logic
+    - 🔄 Handles chained quiz sequences (up to 20 quizzes)
+    - 🎵 Audio transcription support via Gemini API
+    - 📊 Data analysis with pandas/numpy
+    - 🔍 Intelligent HTML parsing with BeautifulSoup
+    - ⏱️ Time-constrained execution (3 minutes per quiz)
+    - 🛡️ Fallback submission mechanism
     
     ## How to use:
     1. Enter your email (required)
@@ -26,6 +49,7 @@ with gr.Blocks(title="Vizora - Quiz Solver") as gradio_demo:
     4. Click "Solve Quiz" and wait for results
     
     **Note:** Email and secret key must match the configured values. Complex quizzes may take several minutes to solve.
+    The system will automatically handle quiz chains and retry failed attempts.
     """)
     
     with gr.Row():
@@ -91,20 +115,35 @@ with gr.Blocks(title="Vizora - Quiz Solver") as gradio_demo:
         outputs=output
     )
     
-    gr.Markdown("""
+    gr.Markdown(f"""
     ---
     ### About
     - **GitHub:** [Vinay-Saw/vizora](https://github.com/Vinay-Saw/vizora)
-    - **Powered by:** FastAPI, Gemini/GPT, OpenRouter LLMs
+    - **Powered by:** FastAPI, Gradio, {LLM_PROVIDER.upper()} (Gemini 2.5 Flash / GPT-4o)
     - **FastAPI Endpoint:** [https://vinaysaw-vizora.hf.space/](https://vinaysaw-vizora.hf.space/)
     - **API Documentation:** [https://vinaysaw-vizora.hf.space/docs](https://vinaysaw-vizora.hf.space/docs)
+    
+    ### System Capabilities
+    - **Quiz Solving:** Automatic code generation and execution
+    - **Data Processing:** pandas, numpy, BeautifulSoup, PyPDF2
+    - **Audio Handling:** Gemini API for transcription (.opus, .mp3, .wav)
+    - **Retry Logic:** Up to 2 attempts per quiz (1 retry)
+    - **Fallback Mechanism:** Ensures progression through quiz chains
+    - **Time Management:** 3-minute limit per quiz, 150s script timeout
     
     ### API Usage
     ```bash
     curl -X POST https://vinaysaw-vizora.hf.space/ \\
       -H "Content-Type: application/json" \\
-      -d '{"email": "your@email.com", "secret": "your_secret", "url": "https://quiz-url.com"}'
+      -d '{{"email": "your@email.com", "secret": "your_secret", "url": "https://quiz-url.com"}}'
     ```
+    
+    ### Environment Variables Required
+    - `SECRET_KEY`: Authentication key
+    - `STUDENT_EMAIL`: Your email address
+    - `GEMINI_API_KEY`: For audio transcription
+    - `AIPIPE_TOKEN`: For AI Pipe LLM access (if using aipipe)
+    - `LLM_PROVIDER`: "gemini" or "aipipe" (default: aipipe)
     """)
 
 # Mount Gradio app to FastAPI at /ui/ path
