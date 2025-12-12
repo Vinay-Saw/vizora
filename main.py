@@ -296,19 +296,28 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-If the quiz mentions audio files (e.g., "Listen to /path/audio.opus"):
-1. Find the audio file path/URL mentioned in the quiz instructions (look for file extensions like .opus, .mp3, .wav, .ogg)
-2. Build the full URL (if path starts with /, prepend the origin)
-3. Download the audio file
-4. Use Gemini API to transcribe it:
-   - Upload file to gemini_client.files.upload()
-   - Wait for processing (check audio_file.state.name)
-   - Use gemini-2.0-flash-exp model with the audio file
-   - Ask Gemini to transcribe and return lowercase text only
-   - Delete the uploaded file after transcription
-5. If GEMINI_API_KEY not available or fails, use placeholder text (difficulty 2 reveals next URL anyway)
+If quiz instructions mention audio files (e.g., "Listen to /path/audio.opus"):
 
-DO NOT provide regex patterns or hardcoded examples - figure out how to extract the audio path yourself from the quiz content.
+CRITICAL - URL Construction:
+- The quiz content will contain audio file references (look for extensions: .opus, .mp3, .wav, .ogg)
+- There will be a embedded audio URL path in the quiz content or a direct URL
+
+Steps:
+1. Search quiz content for audio file paths (look for common audio extensions)
+2. Determine the path can be embedded in the quiz content or directly referenced
+3. Get the full audio URL 
+4. Download audio file from the URL
+5. Save audio file temporarily with correct extension
+6. Use Gemini API to transcribe:
+   - Create genai.Client with GEMINI_API_KEY
+   - Upload file: gemini_client.files.upload(path=filename)
+   - Wait for processing: check audio_file.state.name
+   - Generate transcription with gemini-2.0-flash-exp model
+   - Ask to transcribe and return lowercase text only
+   - Clean up: delete uploaded file
+7. If GEMINI_API_KEY unavailable or error, submit the error message as the answer
+
+Remember: NEVER hardcode URLs - always get them by extracting from quiz html.
 
 EXECUTION CONSTRAINTS:
 - Must complete within 120 seconds
