@@ -305,48 +305,91 @@ CRITICAL - URL Construction:
 - If path is relative (starts with /), build full URL: origin + path
 - If path is absolute URL, use it directly
 
-Transcription Steps (FOLLOW EXACTLY):
+Transcription Steps (FOLLOW EXACTLY - WRAP IN TRY/EXCEPT):
 1. Import required modules: import time, from google import genai
 2. Download audio file and save locally with proper extension
-3. Transcribe using Gemini API:
+3. Transcribe using Gemini API (WRAP ENTIRE BLOCK IN TRY/EXCEPT):
 
 ```python
-# Initialize Gemini client
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-if not gemini_api_key:
-    answer = "GEMINI_API_KEY not configured"
-else:
-    try:
+audio_filename = None
+answer = None
+
+try:
+    # Download audio
+    async with httpx.AsyncClient() as client:
+        audio_response = await client.get(audio_url)
+        audio_filename = "audio_file" + os.path.splitext(audio_url)[1]
+        with open(audio_filename, "wb") as f:
+            f.write(audio_response.content)
+        print(f"Downloaded audio to {audio_filename}")
+    
+    # Initialize Gemini client
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_api_key:
+        answer = "gemini_key_missing"
+        print("GEMINI_API_KEY not available")
+    else:
         gemini_client = genai.Client(api_key=gemini_api_key)
         
-        # Upload audio file - use 'file' parameter, NOT 'path'
+        # Upload audio file - use 'file' parameter with file object
+        print("Uploading audio to Gemini...")
         with open(audio_filename, "rb") as f:
             audio_file = gemini_client.files.upload(file=f)
+        print(f"Uploaded: {audio_file.name}, state: {audio_file.state.name}")
         
-        # Wait for processing
-        while audio_file.state.name == "PROCESSING":
+        # Wait for processing (max 30 seconds)
+        wait_time = 0
+        while audio_file.state.name == "PROCESSING" and wait_time < 30:
             time.sleep(1)
+            wait_time += 1
             audio_file = gemini_client.files.get(name=audio_file.name)
+            print(f"Processing... ({wait_time}s)")
         
         if audio_file.state.name == "FAILED":
-            answer = "Audio processing failed"
+            answer = "audio_processing_failed"
+            print("Audio processing failed")
+        elif audio_file.state.name == "PROCESSING":
+            answer = "audio_timeout"
+            print("Audio processing timeout")
         else:
-            # Generate transcription using chat model
+            # Generate transcription
+            print("Generating transcription...")
             response = gemini_client.models.generate_content(
                 model="gemini-2.0-flash-exp",
                 contents=[
                     audio_file,
-                    "Transcribe this audio in lowercase. Return only the transcribed text, no explanations."
+                    "Transcribe this audio in lowercase. Return only the transcribed text."
                 ]
             )
             answer = response.text.strip().lower()
+            print(f"Transcription: {answer}")
         
         # Cleanup
-        gemini_client.files.delete(name=audio_file.name)
-        os.remove(audio_filename)
-    except Exception as e:
-        answer = f"transcription_error_{str(e)[:50]}"
+        try:
+            gemini_client.files.delete(name=audio_file.name)
+        except:
+            pass
+
+except Exception as e:
+    print(f"Audio transcription error: {e}")
+    import traceback
+    traceback.print_exc()
+    answer = f"error_{str(e)[:30].replace(' ', '_')}"
+
+finally:
+    # Always clean up audio file
+    if audio_filename and os.path.exists(audio_filename):
+        try:
+            os.remove(audio_filename)
+        except:
+            pass
+
+# If answer is still None, use a fallback
+if not answer:
+    answer = "transcription_failed"
 ```
+
+CRITICAL: Even if audio transcription completely fails, the script MUST continue and submit SOMETHING as the answer.
 
 Remember: Extract audio URLs dynamically from quiz content, never hardcode.
 
@@ -469,43 +512,64 @@ async def execute_solver_script(script_path: str) -> Tuple[str, str]:
 
 
 async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fallback") -> Optional[str]:
-    """Submit a random fallback answer to reveal next quiz URL."""
+    """Submit fallback answers until we get a next quiz URL. NEVER gives up."""
     import random
     fallback_answers = [
-        "unable to solve",
-        "skip",
         "0",
+        "skip",
         "unknown",
+        "unable to solve",
         "no answer",
-        str(random.randint(0, 999))
+        "error",
+        str(random.randint(0, 999)),
+        str(random.randint(1000, 9999)),
+        "a", "b", "c",
+        "true", "false",
+        "none",
     ]
     
-    fallback = random.choice(fallback_answers)
-    print(f"\n⚠️ Submitting fallback answer '{fallback}' to reveal next quiz URL...")
-    
-    try:
-        submission = {
-            "email": os.getenv("STUDENT_EMAIL"),
-            "secret": SECRET_KEY,
-            "url": quiz_url,
-            "answer": fallback
-        }
+    # Try up to 10 different fallback answers
+    for attempt in range(10):
+        fallback = random.choice(fallback_answers)
+        print(f"\n⚠️ Attempt {attempt+1}/10: Submitting fallback answer '{fallback}' (reason: {reason})...")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{origin}/submit", json=submission)
+        try:
+            submission = {
+                "email": os.getenv("STUDENT_EMAIL"),
+                "secret": SECRET_KEY,
+                "url": quiz_url,
+                "answer": fallback
+            }
             
-            if response.status_code == 200:
-                try:
-                    result = response.json()
-                    next_url = result.get("url")
-                    if next_url:
-                        print(f"✓ Fallback submission successful, next URL: {next_url}")
-                        return next_url
-                except:
-                    pass
-    except Exception as e:
-        print(f"❌ Fallback submission failed: {e}")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{origin}/submit", json=submission)
+                
+                print(f"Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
+                        next_url = result.get("url")
+                        if next_url and next_url != quiz_url:
+                            print(f"✅ Fallback successful! Next URL: {next_url}")
+                            return next_url
+                        else:
+                            print("Response has no next URL, trying different answer...")
+                    except Exception as e:
+                        print(f"JSON parsing failed: {e}, trying different answer...")
+                        # Try to extract URL from text response
+                        url_match = re.search(r'https?://[^\s<>"\'\']+/(?:quiz|project)\d*[^\s<>"\'\']*', response.text)
+                        if url_match:
+                            return url_match.group(0)
+                else:
+                    print(f"Bad status code, trying different answer...")
+                    
+        except Exception as e:
+            print(f"❌ Submission error: {e}, trying different answer...")
+        
+        await asyncio.sleep(1)  # Brief delay between attempts
     
+    print("⚠️ WARNING: All fallback attempts failed. Returning None.")
     return None
 
 
@@ -609,6 +673,7 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
         print(f"Time remaining: {remaining_time:.1f}s")
         print(f"{'='*80}\n")
         
+        origin = None  # Initialize origin outside try block
         try:
             # Fetch and process page
             print("Fetching page content...")
@@ -675,9 +740,23 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                 url_match = re.search(r'https?://[^\s<>"\'\']+/(?:quiz|project)\d*[^\s<>"\'\']*', stdout)
                 if url_match:
                     return url_match.group(0), True, None
-                # Submit fallback if no URL found
+                # Submit fallback if no URL found - MUST get next URL
+                if not origin:
+                    # Extract origin from current_url if we don't have it
+                    from urllib.parse import urlparse
+                    parsed = urlparse(current_url)
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
                 fallback_url = await submit_fallback_answer(current_url, origin, "no result extracted")
-                return fallback_url, False, "Could not extract result"
+                if fallback_url:
+                    return fallback_url, False, "Could not extract result"
+                else:
+                    # Even if fallback failed, continue loop - don't get stuck
+                    print("⚠️ Fallback returned None, will retry...")
+                    if retry_count < MAX_RETRIES_PER_QUIZ:
+                        retry_count += 1
+                        await asyncio.sleep(2)
+                        continue
+                    return None, False, "Fallback submission failed"
         
         except Exception as e:
             print(f"❌ Error during quiz attempt: {str(e)}")
@@ -691,9 +770,18 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                 await asyncio.sleep(2)
                 continue
             else:
-                print(f"⚠️ All retries failed - submitting fallback answer...")
+                print(f"⚠️ All retries exhausted - MUST submit fallback to continue...")
+                # Extract origin if we don't have it
+                if not origin:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(current_url)
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
                 fallback_url = await submit_fallback_answer(current_url, origin, str(e))
-                return fallback_url, False, str(e)
+                if fallback_url:
+                    return fallback_url, False, str(e)
+                else:
+                    # Last resort: return None and let main loop handle it
+                    return None, False, f"All retries and fallback failed: {str(e)}"
     
     return None, False, "Max retries exceeded"
 
@@ -716,21 +804,56 @@ async def process_quiz(email: str, secret: str, url: str):
             attempt += 1
             quiz_start_time = time.time()
             
-            next_url, success, error = await solve_single_quiz(
-                current_url, attempt, quiz_start_time
-            )
-            
-            quiz_duration = time.time() - quiz_start_time
-            print(f"\nQuiz #{attempt} completed in {quiz_duration:.1f}s")
-            
-            if next_url and next_url != current_url:
-                current_url = next_url
-                print(f"\n➡️ Moving to next quiz: {current_url}")
-                await asyncio.sleep(1)
-                continue
-            
-            print(f"\n✅ Quiz sequence completed after {attempt} quiz(zes)!")
-            break
+            try:
+                next_url, success, error = await solve_single_quiz(
+                    current_url, attempt, quiz_start_time
+                )
+                
+                quiz_duration = time.time() - quiz_start_time
+                print(f"\nQuiz #{attempt} completed in {quiz_duration:.1f}s")
+                
+                if next_url and next_url != current_url:
+                    current_url = next_url
+                    print(f"\n➡️ Moving to next quiz: {current_url}")
+                    await asyncio.sleep(1)
+                    continue
+                elif next_url == current_url:
+                    print("⚠️ Got same URL back, trying emergency fallback...")
+                    # Extract origin from current URL
+                    from urllib.parse import urlparse
+                    parsed = urlparse(current_url)
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
+                    emergency_url = await submit_fallback_answer(current_url, origin, "same URL returned")
+                    if emergency_url and emergency_url != current_url:
+                        current_url = emergency_url
+                        print(f"\n➡️ Emergency fallback succeeded: {current_url}")
+                        await asyncio.sleep(1)
+                        continue
+                
+                print(f"\n✅ Quiz sequence completed after {attempt} quiz(zes)!")
+                break
+                
+            except Exception as e:
+                print(f"❌ CRITICAL ERROR in quiz loop: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Try emergency fallback to continue
+                print("\n⚠️ Attempting emergency fallback to continue...")
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(current_url)
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
+                    emergency_url = await submit_fallback_answer(current_url, origin, f"loop error: {str(e)}")
+                    if emergency_url and emergency_url != current_url:
+                        current_url = emergency_url
+                        print(f"\n➡️ Emergency recovery successful: {current_url}")
+                        await asyncio.sleep(2)
+                        continue
+                except:
+                    pass
+                # If we can't recover, break
+                print("⚠️ Could not recover from error, stopping.")
+                break
         
         if attempt >= max_attempts:
             print(f"⚠️ Reached maximum attempts ({max_attempts})")
