@@ -31,7 +31,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")
 
 # Quiz timing constraints
 QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
-MAX_RETRIES_PER_QUIZ = 0  # Retry 0 times if incorrect
+MAX_RETRIES_PER_QUIZ = 1  # Retry 1 time if incorrect
 
 
 class QuizRequest(BaseModel):
