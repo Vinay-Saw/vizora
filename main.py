@@ -329,6 +329,9 @@ REMEMBER:
 - Extract file paths from quiz_content, NOT from quiz_url
 - Use regex to find paths dynamically
 - Never hardcode file paths
+- For AUDIO: Use Gemini API only
+- For CSV: Use flexible date parsing
+- For SHARDS: Download and combine multiple files
 """
 
     # Build retry section
