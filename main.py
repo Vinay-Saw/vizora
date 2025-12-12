@@ -212,23 +212,14 @@ pdf_path_match = re.search(r"/project2/invoice\.pdf", quiz_url)  # ❌ WRONG!
 ```
 
 CORRECT EXAMPLE (searches in quiz_content):
-```python
-# Quiz content is available as a multi-line string in the user prompt
-quiz_content = """..."""  # This contains the instructions
-
-# Extract PDF path from quiz content
-pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)  # ✅ CORRECT!
-if pdf_path_match:
-    pdf_path = pdf_path_match.group(0)
-    pdf_url = f"{{origin}}{{pdf_path}}"
-```
+- Copy the quiz content into a variable in your script
+- Extract PDF path from that quiz_content variable
+- Example: pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)
+- Build full URL: pdf_url = f"{{origin}}{{pdf_path}}"
 
 GENERAL FILE EXTRACTION PATTERN:
-```python
-# Store the quiz content as a variable (it's in the user prompt)
-quiz_content = """
-(the quiz instructions will be here)
-"""
+- Store the quiz content as a multi-line string variable first
+- Search for file paths in quiz_content (not quiz_url!)
 
 # Search for file paths in quiz_content (not quiz_url!)
 file_patterns = [
@@ -268,45 +259,16 @@ If quiz mentions PDF files:
 4. Process according to instructions
 5. Always wrap in try/except with fallback answer
 
-Example:
-```python
-import pdfplumber
-
-# quiz_content is provided in the script
-quiz_content = """..."""
-
-# Extract PDF path from quiz content
-pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)
-if not pdf_path_match:
-    answer = "pdf_path_not_found"
-else:
-    pdf_path = pdf_path_match.group(0)
-    pdf_url = f"{{origin}}{{pdf_path}}"
-    pdf_filename = "downloaded.pdf"
-    
-    try:
-        # Download PDF
-        async with httpx.AsyncClient() as client:
-            response = await client.get(pdf_url)
-            with open(pdf_filename, "wb") as f:
-                f.write(response.content)
-        
-        # Extract and process
-        with pdfplumber.open(pdf_filename) as pdf:
-            # Process PDF according to instructions
-            pass
-        
-        # Calculate answer based on instructions
-        answer = calculated_result
-        
-    except Exception as e:
-        print(f"PDF processing error: {{e}}")
-        answer = "pdf_processing_failed"
-    
-    finally:
-        if os.path.exists(pdf_filename):
-            os.remove(pdf_filename)
-```
+Example approach:
+- Import pdfplumber
+- Copy quiz_content into your script as a string variable
+- Extract PDF path: pdf_path_match = re.search(r'/[\w/-]+\.pdf', quiz_content)
+- If path not found, set answer = "pdf_path_not_found"
+- Otherwise extract path, build full URL: origin + pdf_path
+- Download PDF using httpx
+- Process with pdfplumber (extract tables/text as needed)
+- Always use try/except with fallback answers
+- Clean up files in finally block
 
 REMEMBER:
 - quiz_content contains the instructions (available in user prompt)
