@@ -313,11 +313,11 @@ audio_path = None
 # Try to find audio path in the quiz content
 # Patterns: /path/to/audio.opus, /path/to/file.mp3, /path/to/file.wav, etc.
 audio_patterns = [
-    r'/[\w/-]+\.opus',
-    r'/[\w/-]+\.mp3',
-    r'/[\w/-]+\.wav',
-    r'/[\w/-]+\.ogg',
-    r'https?://[^\s<>"\']+\.(opus|mp3|wav|ogg)',
+    r"/[\w/-]+\.opus",
+    r"/[\w/-]+\.mp3",
+    r"/[\w/-]+\.wav",
+    r"/[\w/-]+\.ogg",
+    r"https?://[^\s<>\"']+\.(opus|mp3|wav|ogg)",
 ]
 
 # Get the quiz content from earlier in the script
