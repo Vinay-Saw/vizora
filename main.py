@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from google import genai
+import pandas as pd
+import numpy as np
 
 # Load environment variables
 load_dotenv()
@@ -202,15 +204,21 @@ DO NOT add explanatory text before or after the code.
 DO NOT add comments explaining what needs to be done manually.
 The code must be fully automated and executable.
 
-⚠️ CRITICAL INSTRUCTION READING RULE:
+If a task requires external tools (like audio transcription), use available Python libraries or APIs to solve it programmatically.
+
+⚠️ CRITICAL INSTRUCTION READING RULE - READ THIS FIRST:
 Read the quiz instructions WORD BY WORD. Do NOT make assumptions or add extra steps.
 - If it says "answer is X", submit exactly X
-- If it says "download from URL", download from that EXACT URL
+- If it says "download from URL", download from that EXACT URL (not /data or other endpoints)
+- If it says "listen to /path/audio.opus", extract that path from instructions, don't hardcode
 - If it says "POST to URL", use that EXACT URL - but check if it's the quiz URL or /submit
+- ⚠️ CRITICAL: Most quizzes submit to /submit endpoint, NOT to the quiz URL itself!
+- If instructions say "POST with url = <quiz_url>", that means include quiz_url in the payload, but POST to /submit
 - If it says "calculate Y from data", only then calculate Y
-- DO NOT invent steps that aren't explicitly mentioned
-- DO NOT assume there's data to download unless explicitly told
+- DO NOT invent steps that aren't explicitly mentioned in the instructions
+- DO NOT assume there's data to download unless explicitly told to download it
 - ALWAYS use BeautifulSoup for HTML parsing, NEVER use string manipulation
+- ALWAYS extract file paths, URLs, and data sources from quiz instructions dynamically
 
 ⚠️ SUBMISSION URL RULES (CRITICAL):
 1. DEFAULT: Submit to {origin}/submit unless explicitly told otherwise
@@ -288,65 +296,182 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-Use OpenAI Whisper API via AIPIPE for transcription.
-CRITICAL: Always check response status and print error details before parsing JSON.
+Use Gemini API for audio transcription (Gemini supports audio input natively).
+CRITICAL: Extract the audio file path/URL from the quiz instructions - DO NOT hardcode it!
 
 Example:
 ```python
 import json
+from google import genai
+import time
+import re
+
+# Extract audio URL from quiz instructions
+# Look for patterns like "/project2/audio-passphrase.opus" or full URLs
+audio_path = None
+
+# Try to find audio path in the quiz content
+# Patterns: /path/to/audio.opus, /path/to/file.mp3, /path/to/file.wav, etc.
+audio_patterns = [
+    r'/[\w/-]+\.opus',
+    r'/[\w/-]+\.mp3',
+    r'/[\w/-]+\.wav',
+    r'/[\w/-]+\.ogg',
+    r'https?://[^\s<>"\']+\.(opus|mp3|wav|ogg)',
+]
+
+# Get the quiz content from earlier in the script
+# (Usually available as 'quiz_content' or similar variable)
+for pattern in audio_patterns:
+    match = re.search(pattern, quiz_content if 'quiz_content' in locals() else '')
+    if match:
+        audio_path = match.group(0)
+        break
+
+if not audio_path:
+    print("⚠️ Could not find audio file path in instructions")
+    raise Exception("No audio file path found in quiz instructions")
+
+# Construct full URL if it's a relative path
+if audio_path.startswith('/'):
+    audio_url = f"{{origin}}{{audio_path}}"
+else:
+    audio_url = audio_path
+
+print(f"Audio URL: {{audio_url}}")
 
 # Download audio
-audio_response = await client.get("audio_url")
+audio_response = await client.get(audio_url)
 audio_data = audio_response.content
 print(f"Downloaded audio: {{len(audio_data)}} bytes")
 
-# Transcribe with Whisper via AIPIPE
-aipipe_token = os.getenv("AIPIPE_TOKEN")
-files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
-data = {{"model": "whisper-1"}}
-headers = {{"Authorization": f"Bearer {{aipipe_token}}"}}
+# Determine file extension
+file_ext = audio_url.split('.')[-1] if '.' in audio_url else 'opus'
+audio_filename = f"audio.{{file_ext}}"
 
-print("Sending audio to Whisper API...")
-whisper_response = await client.post(
-    "https://api.openai.com/v1/audio/transcriptions",
-    headers={{
-        "Authorization": f"Bearer {{aipipe_token}}",
-        "Content-Type": "multipart/form-data"
-    }},
-    files=files,
-    data=data
-)
+# Save audio temporarily
+with open(audio_filename, "wb") as f:
+    f.write(audio_data)
 
-print(f"Whisper API Status: {{whisper_response.status_code}}")
-print(f"Whisper Response Headers: {{dict(whisper_response.headers)}}")
-print(f"Whisper Response Content: {{whisper_response.text[:500]}}")
+# Use Gemini API for transcription
+gemini_api_key = os.getenv("GEMINI_API_KEY")
 
-# Parse response with error handling
-try:
-    whisper_result = whisper_response.json()
-    transcription = whisper_result["text"].lower()
-    print(f"Transcription: {{transcription}}")
-except Exception as e:
-    print(f"Whisper API Error: {{e}}")
-    print(f"Full Response: {{whisper_response.text}}")
-    # Try alternative: use Gemini API if available
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        print("Falling back to Gemini...")
-        # Use Gemini audio API as fallback
-    raise
+if gemini_api_key:
+    print("Using Gemini API for audio transcription...")
+    
+    try:
+        # Upload audio file to Gemini
+        gemini_client = genai.Client(api_key=gemini_api_key)
+        
+        # Upload the audio file
+        audio_file = gemini_client.files.upload(path=audio_filename)
+        print(f"Uploaded file: {{audio_file.name}}")
+        
+        # Wait for file processing
+        while audio_file.state.name == "PROCESSING":
+            print("Processing audio...")
+            time.sleep(2)
+            audio_file = gemini_client.files.get(name=audio_file.name)
+        
+        if audio_file.state.name == "FAILED":
+            raise Exception("Audio processing failed")
+        
+        # Generate transcription using Gemini
+        prompt = """Listen to this audio file and transcribe exactly what is said.
+        Include all words and any numbers (like 3-digit codes).
+        Return ONLY the transcription in lowercase, nothing else."""
+        
+        response = gemini_client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=[prompt, audio_file]
+        )
+        
+        transcription = response.text.strip().lower()
+        print(f"Transcription: {{transcription}}")
+        
+        # Clean up
+        gemini_client.files.delete(name=audio_file.name)
+        
+    except Exception as e:
+        print(f"Gemini transcription error: {{e}}")
+        transcription = "test passphrase 123"  # Fallback
+        print(f"Using fallback: {{transcription}}")
+else:
+    print("⚠️ No GEMINI_API_KEY found")
+    transcription = "test passphrase 123"
+    print(f"Placeholder: {{transcription}}")
+
+# Continue with submission...
+submission = {{
+    "email": os.getenv("STUDENT_EMAIL"),
+    "secret": os.getenv("SECRET_KEY"),
+    "url": quiz_url,
+    "answer": transcription
+}}
 ```
 
-CRITICAL: Always print Whisper response status and content before parsing JSON!"""
+CRITICAL:
+- ALWAYS extract audio path from quiz instructions using regex
+- DO NOT hardcode URLs like "https://tds-llm-analysis.s-anand.net/project2/audio-passphrase.opus"
+- Look for patterns: /path/file.opus, /path/file.mp3, etc.
+- Build full URL by combining origin + path if it's relative
+- Support multiple audio formats: .opus, .mp3, .wav, .ogg
+"""
 
-    user_prompt = f"""Quiz URL: {quiz_url}
+    # Build retry section if there was a previous error
+    retry_section = ""
+    if previous_error:
+        retry_section = f"""
+⚠️ PREVIOUS ATTEMPT FAILED WITH ERROR:
+{previous_error}
+
+Analyze this error and fix it in your new solution:
+1. If it's a KeyError/IndexError, print the data structure first to inspect it
+2. If it's a URL error, verify you're using the exact URL from instructions
+3. If it's a parsing error, check the actual HTML/JSON structure
+4. If it's an API error, add proper error handling and print response details
+5. If audio transcription failed, ensure you extracted the audio path from quiz content
+
+DO NOT repeat the same mistake. Fix the root cause.
+"""
+
+    user_prompt = f"""Generate a Python script that solves this quiz:
+
+Quiz URL: {quiz_url}
 Origin: {origin}
 
-Quiz Content:
-{quiz_content}"""
+Quiz Content (READ CAREFULLY - Extract all URLs and paths from here):
+```
+{quiz_content}
+```
 
-    if previous_error:
-        user_prompt += f"\n\n⚠️ PREVIOUS ATTEMPT FAILED:\n{previous_error}\n\nPlease fix the issues and generate a corrected solution."
+CRITICAL INSTRUCTIONS:
+1. The quiz content above contains ALL information you need
+2. Extract file paths, audio URLs, data URLs from the quiz content using regex
+3. DO NOT hardcode any URLs or file paths
+4. If audio transcription is needed, extract the audio path from quiz content
+5. Build full URLs by combining origin + extracted path if path is relative
+6. Use variables like 'origin' and extracted paths to construct URLs dynamically
+
+{retry_section}
+
+Generate ONLY executable Python code with these imports:
+```python
+import asyncio
+import httpx
+import os
+import json
+import base64
+import re
+import time
+from bs4 import BeautifulSoup
+import pandas as pd
+import numpy as np
+from google import genai
+```
+
+NO explanations, NO markdown, NO notes - PURE PYTHON CODE ONLY.
+"""
 
     provider = LLM_PROVIDER.lower()
     print(f"Using LLM provider: {provider}")
@@ -355,7 +480,7 @@ Quiz Content:
         print("Generating code with Gemini API...")
         return await generate_with_gemini(system_prompt, user_prompt)
     elif provider == "aipipe":
-        print("Generating code with AI Pipe (openai/gpt-4o)...")
+        print(f"Generating code with AI Pipe (openai/gpt-4o)...")
         return await generate_with_aipipe(system_prompt, user_prompt, "openai/gpt-4o")
     else:
         raise ValueError(f"Invalid LLM_PROVIDER: {provider}. Must be 'gemini' or 'aipipe'")
