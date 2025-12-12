@@ -376,10 +376,11 @@ if gemini_api_key:
         if audio_file.state.name == "FAILED":
             raise Exception("Audio processing failed")
         
+            
         # Generate transcription using Gemini
-        prompt = """Listen to this audio file and transcribe exactly what is said.
+        prompt = \"\"\"Listen to this audio file and transcribe exactly what is said.
         Include all words and any numbers (like 3-digit codes).
-        Return ONLY the transcription in lowercase, nothing else."""
+        Return ONLY the transcription in lowercase, nothing else.\"\"\"
         
         response = gemini_client.models.generate_content(
             model="gemini-2.0-flash-exp",
@@ -387,7 +388,7 @@ if gemini_api_key:
         )
         
         transcription = response.text.strip().lower()
-        print(f"Transcription: {{transcription}}")
+        print(f"Transcription: {transcription}")
         
         # Clean up
         gemini_client.files.delete(name=audio_file.name)
