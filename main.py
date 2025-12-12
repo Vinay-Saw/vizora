@@ -296,127 +296,25 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-Use Gemini API for audio transcription (Gemini supports audio input natively).
-CRITICAL: Extract the audio file path/URL from the quiz instructions - DO NOT hardcode it!
+If the quiz mentions audio files (e.g., "Listen to /path/audio.opus"):
+1. Find the audio file path/URL mentioned in the quiz instructions (look for file extensions like .opus, .mp3, .wav, .ogg)
+2. Build the full URL (if path starts with /, prepend the origin)
+3. Download the audio file
+4. Use Gemini API to transcribe it:
+   - Upload file to gemini_client.files.upload()
+   - Wait for processing (check audio_file.state.name)
+   - Use gemini-2.0-flash-exp model with the audio file
+   - Ask Gemini to transcribe and return lowercase text only
+   - Delete the uploaded file after transcription
+5. If GEMINI_API_KEY not available or fails, use placeholder text (difficulty 2 reveals next URL anyway)
 
-Example:
-```python
-import json
-from google import genai
-import time
-import re
+DO NOT provide regex patterns or hardcoded examples - figure out how to extract the audio path yourself from the quiz content.
 
-# Extract audio URL from quiz instructions
-# Look for patterns like "/project2/audio-passphrase.opus" or full URLs
-audio_path = None
-
-# Try to find audio path in the quiz content
-# Patterns: /path/to/audio.opus, /path/to/file.mp3, /path/to/file.wav, etc.
-audio_patterns = [
-    r"/[\w/-]+\.opus",
-    r"/[\w/-]+\.mp3",
-    r"/[\w/-]+\.wav",
-    r"/[\w/-]+\.ogg",
-    r"https?://[^\s<>\"']+\.(opus|mp3|wav|ogg)",
-]
-
-# Get the quiz content from earlier in the script
-# (Usually available as 'quiz_content' or similar variable)
-for pattern in audio_patterns:
-    match = re.search(pattern, quiz_content if 'quiz_content' in locals() else '')
-    if match:
-        audio_path = match.group(0)
-        break
-
-if not audio_path:
-    print("⚠️ Could not find audio file path in instructions")
-    raise Exception("No audio file path found in quiz instructions")
-
-# Construct full URL if it's a relative path
-if audio_path.startswith('/'):
-    audio_url = f"{{origin}}{{audio_path}}"
-else:
-    audio_url = audio_path
-
-print(f"Audio URL: {{audio_url}}")
-
-# Download audio
-audio_response = await client.get(audio_url)
-audio_data = audio_response.content
-print(f"Downloaded audio: {{len(audio_data)}} bytes")
-
-# Determine file extension
-file_ext = audio_url.split('.')[-1] if '.' in audio_url else 'opus'
-audio_filename = f"audio.{{file_ext}}"
-
-# Save audio temporarily
-with open(audio_filename, "wb") as f:
-    f.write(audio_data)
-
-# Use Gemini API for transcription
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-
-if gemini_api_key:
-    print("Using Gemini API for audio transcription...")
-    
-    try:
-        # Upload audio file to Gemini
-        gemini_client = genai.Client(api_key=gemini_api_key)
-        
-        # Upload the audio file
-        audio_file = gemini_client.files.upload(path=audio_filename)
-        print(f"Uploaded file: {{audio_file.name}}")
-        
-        # Wait for file processing
-        while audio_file.state.name == "PROCESSING":
-            print("Processing audio...")
-            time.sleep(2)
-            audio_file = gemini_client.files.get(name=audio_file.name)
-        
-        if audio_file.state.name == "FAILED":
-            raise Exception("Audio processing failed")
-        
-            
-        # Generate transcription using Gemini
-        prompt = \"\"\"Listen to this audio file and transcribe exactly what is said.
-        Include all words and any numbers (like 3-digit codes).
-        Return ONLY the transcription in lowercase, nothing else.\"\"\"
-        
-        response = gemini_client.models.generate_content(
-            model="gemini-2.0-flash-exp",
-            contents=[prompt, audio_file]
-        )
-        
-        transcription = response.text.strip().lower()
-        print(f"Transcription: {transcription}")
-        
-        # Clean up
-        gemini_client.files.delete(name=audio_file.name)
-        
-    except Exception as e:
-        print(f"Gemini transcription error: {{e}}")
-        transcription = "test passphrase 123"  # Fallback
-        print(f"Using fallback: {{transcription}}")
-else:
-    print("⚠️ No GEMINI_API_KEY found")
-    transcription = "test passphrase 123"
-    print(f"Placeholder: {{transcription}}")
-
-# Continue with submission...
-submission = {{
-    "email": os.getenv("STUDENT_EMAIL"),
-    "secret": os.getenv("SECRET_KEY"),
-    "url": quiz_url,
-    "answer": transcription
-}}
-```
-
-CRITICAL:
-- ALWAYS extract audio path from quiz instructions using regex
-- DO NOT hardcode URLs like "https://tds-llm-analysis.s-anand.net/project2/audio-passphrase.opus"
-- Look for patterns: /path/file.opus, /path/file.mp3, etc.
-- Build full URL by combining origin + path if it's relative
-- Support multiple audio formats: .opus, .mp3, .wav, .ogg
+EXECUTION CONSTRAINTS:
+- Must complete within 120 seconds
+- Print "FINAL ANSWER:" before the answer value
+- ALWAYS handle both JSON and non-JSON responses with try/except
+- Print HTTP status code and content-type for debugging
 """
 
     # Build retry section if there was a previous error
