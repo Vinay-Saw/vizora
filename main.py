@@ -288,25 +288,56 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-Use OpenAI Whisper API with AIPIPE_TOKEN (via aipipe) or Gemini API with GEMINI_API_KEY for transcription.
-Example with AIPIPE:
+Use OpenAI Whisper API via AIPIPE for transcription.
+CRITICAL: Always check response status and print error details before parsing JSON.
+
+Example:
 ```python
+import json
+
+# Download audio
 audio_response = await client.get("audio_url")
 audio_data = audio_response.content
+print(f"Downloaded audio: {{len(audio_data)}} bytes")
 
+# Transcribe with Whisper via AIPIPE
 aipipe_token = os.getenv("AIPIPE_TOKEN")
 files = {{"file": ("audio.opus", audio_data, "audio/opus")}}
 data = {{"model": "whisper-1"}}
 headers = {{"Authorization": f"Bearer {{aipipe_token}}"}}
 
+print("Sending audio to Whisper API...")
 whisper_response = await client.post(
-    "https://aipipe.org/openrouter/v1/audio/transcriptions",
-    headers=headers,
+    "https://api.openai.com/v1/audio/transcriptions",
+    headers={{
+        "Authorization": f"Bearer {{aipipe_token}}",
+        "Content-Type": "multipart/form-data"
+    }},
     files=files,
     data=data
 )
-transcription = whisper_response.json()["text"].lower()
-```"""
+
+print(f"Whisper API Status: {{whisper_response.status_code}}")
+print(f"Whisper Response Headers: {{dict(whisper_response.headers)}}")
+print(f"Whisper Response Content: {{whisper_response.text[:500]}}")
+
+# Parse response with error handling
+try:
+    whisper_result = whisper_response.json()
+    transcription = whisper_result["text"].lower()
+    print(f"Transcription: {{transcription}}")
+except Exception as e:
+    print(f"Whisper API Error: {{e}}")
+    print(f"Full Response: {{whisper_response.text}}")
+    # Try alternative: use Gemini API if available
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        print("Falling back to Gemini...")
+        # Use Gemini audio API as fallback
+    raise
+```
+
+CRITICAL: Always print Whisper response status and content before parsing JSON!"""
 
     user_prompt = f"""Quiz URL: {quiz_url}
 Origin: {origin}
