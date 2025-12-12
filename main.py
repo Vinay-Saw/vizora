@@ -31,7 +31,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "aipipe")
 
 # Quiz timing constraints
 QUIZ_TIME_LIMIT = 180  # 3 minutes per quiz in seconds
-MAX_RETRIES_PER_QUIZ = 1  # Retry 1 time if incorrect
+MAX_RETRIES_PER_QUIZ = 3  # Retry up to 3 times if incorrect
 
 
 class QuizRequest(BaseModel):
@@ -424,7 +424,7 @@ async def execute_solver_script(script_path: str) -> Tuple[str, str]:
 
 
 async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fallback") -> Optional[str]:
-    """Submit fallback answers until we get a next quiz URL. NEVER gives up."""
+    """Submit fallback answers until we get a next quiz URL. Limited to 3 attempts."""
     import random
     fallback_answers = [
         "0",
@@ -440,10 +440,10 @@ async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fall
         "none",
     ]
     
-    # Try up to 10 different fallback answers
-    for attempt in range(10):
+    # Try up to 3 different fallback answers
+    for attempt in range(3):
         fallback = random.choice(fallback_answers)
-        print(f"\n⚠️ Attempt {attempt+1}/10: Submitting fallback answer '{fallback}' (reason: {reason})...")
+        print(f"\n⚠️ Attempt {attempt+1}/3: Submitting fallback answer '{fallback}' (reason: {reason})...")
         
         try:
             submission = {
@@ -462,6 +462,12 @@ async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fall
                     try:
                         result = response.json()
                         next_url = result.get("url")
+                        
+                        # Check if quiz sequence has ended (null URL)
+                        if next_url is None or next_url == "null":
+                            print("🏁 Quiz sequence ended (null URL received)")
+                            return None
+                        
                         if next_url and next_url != quiz_url:
                             print(f"✅ Fallback successful! Next URL: {next_url}")
                             return next_url
@@ -631,9 +637,14 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                 next_quiz_url = result.get("url")
                 print(f"\n❌ Answer incorrect: {reason}")
                 
+                # Check if quiz sequence ended (null URL)
+                if next_quiz_url is None or next_quiz_url == "null":
+                    print("🏁 Quiz sequence ended (null URL in response)")
+                    return None, False, "Quiz sequence completed"
+                
                 if retry_count < MAX_RETRIES_PER_QUIZ:
                     retry_count += 1
-                    last_error = f"Previous answer was incorrect. Reason: {reason}\n\nPrevious output:\n{stdout[-2000:]}"
+                    last_error = f"Previous answer was INCORRECT.\n\nREASON FROM SERVER: {reason}\n\nFix the issue based on this feedback.\n\nPrevious output:\n{stdout[-2000:]}"
                     print(f"🔄 Retrying quiz (attempt {retry_count + 1}/{MAX_RETRIES_PER_QUIZ + 1})...")
                     await asyncio.sleep(2)
                     continue
@@ -644,6 +655,10 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                         return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
                     # Otherwise submit fallback
                     fallback_url = await submit_fallback_answer(current_url, origin, reason)
+                    # Check if fallback returned None (quiz ended)
+                    if fallback_url is None:
+                        print("🏁 Quiz sequence ended (fallback returned None)")
+                        return None, False, "Quiz sequence completed"
                     return fallback_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
             
             else:
