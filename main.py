@@ -257,14 +257,15 @@ Generate ONLY valid Python code that:
 5. Handles both JSON and non-JSON responses
 
 CODE STRUCTURE REQUIREMENTS:
-- Start with all imports at the top
+- Start with ALL imports at the top (include: httpx, asyncio, os, json, time if needed)
 - Use async/await with httpx.AsyncClient for all HTTP operations
-- Use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY") for credentials
+- Validate environment variables exist before using them
 - Include comprehensive error handling with try/except blocks
 - Print debug information at every major step
 - ALWAYS use BeautifulSoup for HTML parsing (from bs4 import BeautifulSoup)
 - NEVER use string manipulation methods like .find() or slicing for HTML parsing
 - ALWAYS wrap response.json() in try/except
+- Clean up temporary files in finally blocks
 
 HTML PARSING RULES (CRITICAL):
 1. ALWAYS use BeautifulSoup to parse HTML content
@@ -296,34 +297,73 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-If quiz instructions mention audio files, you MUST transcribe them using Gemini API as follows:
+If quiz instructions mention audio files, you MUST transcribe them using Gemini API.
 
 CRITICAL - URL Construction:
-- The quiz content will contain audio file references (look for extensions: .opus, .mp3, .wav, .ogg)
-- There will be a complete audio URL path in the quiz html code or a direct URL
+- Search quiz content for audio file references (.opus, .mp3, .wav, .ogg extensions)
+- Extract the audio file path dynamically from quiz content
+- If path is relative (starts with /), build full URL: origin + path
+- If path is absolute URL, use it directly
 
-Steps:
-1. Search quiz content for audio file paths (look for common audio extensions)
-2. Determine the path can be embedded in the quiz content or directly referenced
-3. Get the full audio URL 
-4. Download audio file from the URL
-5. Save audio file temporarily with correct extension
-6. Use Gemini API to transcribe:
-   - Create genai.Client with GEMINI_API_KEY
-   - Upload file: gemini_client.files.upload(path=filename)
-   - Wait for processing: check audio_file.state.name
-   - Generate transcription with gemini-2.0-flash-exp model
-   - Ask to transcribe and return lowercase text only
-   - Clean up: delete uploaded file
-7. If GEMINI_API_KEY unavailable or error, submit the error message as the answer
+Transcription Steps (FOLLOW EXACTLY):
+1. Import required modules: import time, from google import genai
+2. Download audio file and save locally with proper extension
+3. Transcribe using Gemini API:
 
-Remember: NEVER hardcode URLs - always get them by extracting from quiz html.
+```python
+# Initialize Gemini client
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+if not gemini_api_key:
+    answer = "GEMINI_API_KEY not configured"
+else:
+    try:
+        gemini_client = genai.Client(api_key=gemini_api_key)
+        
+        # Upload audio file - use 'file' parameter, NOT 'path'
+        with open(audio_filename, "rb") as f:
+            audio_file = gemini_client.files.upload(file=f)
+        
+        # Wait for processing
+        while audio_file.state.name == "PROCESSING":
+            time.sleep(1)
+            audio_file = gemini_client.files.get(name=audio_file.name)
+        
+        if audio_file.state.name == "FAILED":
+            answer = "Audio processing failed"
+        else:
+            # Generate transcription using chat model
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=[
+                    audio_file,
+                    "Transcribe this audio in lowercase. Return only the transcribed text, no explanations."
+                ]
+            )
+            answer = response.text.strip().lower()
+        
+        # Cleanup
+        gemini_client.files.delete(name=audio_file.name)
+        os.remove(audio_filename)
+    except Exception as e:
+        answer = f"transcription_error_{str(e)[:50]}"
+```
+
+Remember: Extract audio URLs dynamically from quiz content, never hardcode.
 
 EXECUTION CONSTRAINTS:
 - Must complete within 120 seconds
 - Print "FINAL ANSWER:" before the answer value
 - ALWAYS handle both JSON and non-JSON responses with try/except
 - Print HTTP status code and content-type for debugging
+
+COMMON MISTAKES TO AVOID:
+1. Missing imports (especially 'time' module for sleep operations)
+2. Not validating environment variables before use
+3. Hardcoding URLs or paths instead of extracting from content
+4. Using wrong parameter names in API calls (e.g., 'path=' vs 'file=')
+5. Not cleaning up temporary files
+6. Assuming data structure without inspecting it first
+7. Not handling both success and failure cases in API responses
 """
 
     # Build retry section if there was a previous error
