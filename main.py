@@ -296,11 +296,11 @@ AVAILABLE LIBRARIES:
 httpx, pandas, json, os, asyncio, base64, re, numpy, BeautifulSoup (bs4), PyPDF2, pdfplumber
 
 ⚠️ AUDIO TRANSCRIPTION:
-If quiz instructions mention audio files (e.g., "Listen to /path/audio.opus"):
+If quiz instructions mention audio files, you MUST transcribe them using Gemini API as follows:
 
 CRITICAL - URL Construction:
 - The quiz content will contain audio file references (look for extensions: .opus, .mp3, .wav, .ogg)
-- There will be a embedded audio URL path in the quiz content or a direct URL
+- There will be a complete audio URL path in the quiz html code or a direct URL
 
 Steps:
 1. Search quiz content for audio file paths (look for common audio extensions)
@@ -426,6 +426,47 @@ async def execute_solver_script(script_path: str) -> Tuple[str, str]:
         process.kill()
         await process.wait()
         return "", "Script execution timed out after 150 seconds."
+
+
+async def submit_fallback_answer(quiz_url: str, origin: str, reason: str = "fallback") -> Optional[str]:
+    """Submit a random fallback answer to reveal next quiz URL."""
+    import random
+    fallback_answers = [
+        "unable to solve",
+        "skip",
+        "0",
+        "unknown",
+        "no answer",
+        str(random.randint(0, 999))
+    ]
+    
+    fallback = random.choice(fallback_answers)
+    print(f"\n⚠️ Submitting fallback answer '{fallback}' to reveal next quiz URL...")
+    
+    try:
+        submission = {
+            "email": os.getenv("STUDENT_EMAIL"),
+            "secret": SECRET_KEY,
+            "url": quiz_url,
+            "answer": fallback
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{origin}/submit", json=submission)
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    next_url = result.get("url")
+                    if next_url:
+                        print(f"✓ Fallback submission successful, next URL: {next_url}")
+                        return next_url
+                except:
+                    pass
+    except Exception as e:
+        print(f"❌ Fallback submission failed: {e}")
+    
+    return None
 
 
 def extract_submission_result(stdout: str) -> dict:
@@ -580,13 +621,23 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                     await asyncio.sleep(2)
                     continue
                 else:
-                    print(f"⚠️ Max retries reached.")
-                    return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
+                    print(f"⚠️ Max retries reached. Submitting fallback to get next URL...")
+                    # Try to use URL from failed response first
+                    if next_quiz_url:
+                        return next_quiz_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
+                    # Otherwise submit fallback
+                    fallback_url = await submit_fallback_answer(current_url, origin, reason)
+                    return fallback_url, False, f"Failed after {MAX_RETRIES_PER_QUIZ + 1} attempts: {reason}"
             
             else:
-                print(f"⚠️ Could not determine if answer was correct (assuming success)")
-                url_match = re.search(r'https?://[^\s<>"\']+/quiz/\d+', stdout)
-                return url_match.group(0) if url_match else None, True, None
+                print(f"⚠️ Could not determine if answer was correct - submitting fallback...")
+                # Try to extract URL from output
+                url_match = re.search(r'https?://[^\s<>"\'\']+/(?:quiz|project)\d*[^\s<>"\'\']*', stdout)
+                if url_match:
+                    return url_match.group(0), True, None
+                # Submit fallback if no URL found
+                fallback_url = await submit_fallback_answer(current_url, origin, "no result extracted")
+                return fallback_url, False, "Could not extract result"
         
         except Exception as e:
             print(f"❌ Error during quiz attempt: {str(e)}")
@@ -600,7 +651,9 @@ async def solve_single_quiz(current_url: str, attempt: int, quiz_start_time: flo
                 await asyncio.sleep(2)
                 continue
             else:
-                return None, False, str(e)
+                print(f"⚠️ All retries failed - submitting fallback answer...")
+                fallback_url = await submit_fallback_answer(current_url, origin, str(e))
+                return fallback_url, False, str(e)
     
     return None, False, "Max retries exceeded"
 
