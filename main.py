@@ -199,6 +199,60 @@ async def generate_solver_code(quiz_content: str, quiz_url: str, origin: str, pr
 ⚠️ CRITICAL OUTPUT REQUIREMENT:
 Generate ONLY valid, executable Python code. NO markdown backticks, NO explanations, NO notes.
 
+⚠️⚠️⚠️ MOST CRITICAL - SUBMISSION FORMAT (READ THIS FIRST) ⚠️⚠️⚠️
+Your script MUST submit the answer using this EXACT format:
+
+```python
+import asyncio
+import httpx
+import os
+import json
+
+async def main():
+    # ... calculate answer here ...
+    
+    # CRITICAL: Submit using this exact format
+    submission = {{
+        "email": os.getenv("STUDENT_EMAIL"),
+        "secret": os.getenv("SECRET_KEY"),
+        "url": quiz_url,  # The quiz URL (for tracking)
+        "answer": answer  # Your calculated answer
+    }}
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{{origin}}/submit",  # ALWAYS post to /submit endpoint!
+            json=submission  # Use json= NOT data=
+        )
+        
+        # CRITICAL: Print response properly
+        print(f"\\n{{'='*80}}")
+        print("SUBMISSION RESPONSE")
+        print(f"{{'='*80}}")
+        print(f"HTTP Status: {{response.status_code}}")
+        print(f"Content-Type: {{response.headers.get('content-type', 'unknown')}}")
+        
+        try:
+            result = response.json()
+            print("Response JSON:")
+            print(json.dumps(result, indent=2))
+        except Exception as e:
+            print(f"JSON parsing failed: {{e}}")
+            print("Response Text:")
+            print(response.text[:1000])
+        print(f"{{'='*80}}\\n")
+
+asyncio.run(main())
+```
+
+SUBMISSION RULES:
+1. ALWAYS POST to {{origin}}/submit (NOT to quiz_url directly)
+2. ALWAYS use json=submission (NOT data=submission)
+3. ALWAYS use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY")
+4. ALWAYS print response with the format shown above
+5. The "url" field in payload = quiz_url (for tracking which quiz)
+6. The POST endpoint = {{origin}}/submit (where you actually send it)
+
 ⚠️ CRITICAL FILE PATH EXTRACTION:
 When instructions mention files (PDF, audio, CSV, PNG, etc.):
 1. **SEARCH IN QUIZ CONTENT**, not in quiz_url
@@ -300,16 +354,26 @@ Quiz Content (⚠️ SEARCH FOR FILE PATHS HERE, NOT IN QUIZ_URL):
 {quiz_content}
 ```
 
-CRITICAL:
-1. The quiz_content above contains ALL file paths (PDF, audio, CSV, etc.)
-2. Use regex to extract file paths FROM quiz_content (copy it into your script as a variable)
-3. DO NOT search in quiz_url
-4. Build full URLs: origin + extracted_path
+CRITICAL REQUIREMENTS:
+1. Copy quiz_content into script as a string variable
+2. Extract file paths FROM quiz_content using regex (NOT from quiz_url)
+3. Calculate/determine the answer based on quiz instructions
+4. ⚠️ SUBMIT the answer using the EXACT submission format shown above
+5. Use os.getenv("STUDENT_EMAIL") and os.getenv("SECRET_KEY")
+6. POST to {{origin}}/submit with json= parameter
+7. Print response in the required format
 
 {retry_section}
 
-Generate ONLY executable Python code with proper imports.
-Include the quiz_content as a multi-line string variable in your script.
+YOUR SCRIPT STRUCTURE MUST BE:
+1. Imports at top (asyncio, httpx, os, json, time, etc.)
+2. async def main(): function
+3. Copy quiz_content as string variable
+4. Extract file paths / calculate answer
+5. Submit using EXACT format above
+6. asyncio.run(main()) at bottom
+
+Generate ONLY executable Python code. NO explanations.
 """
 
     provider = LLM_PROVIDER.lower()
